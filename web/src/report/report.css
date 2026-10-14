@@ -1,0 +1,314 @@
+/* Report viewer, "Halftone storm". Scoped under .rv; tokens come from styles.css.
+   The full-screen scene is the page. The UI floats over it: hero top-left on a soft scrim, a card column on the right
+   (a bottom dock + sheet on phones), the hour timeline along the bottom, the findings sheet sliding in from the right.
+   The scene code queries .stage .plan .map .gmap .overlay .credits and creates .tag3d elements; keep those names. */
+.rv { --pad: 24px; --tl-h: 184px; --side-w: 352px; --dim: color-mix(in srgb, var(--muted) 55%, var(--faint));
+  position: absolute; inset: 0; overflow: hidden; overflow: clip; background: var(--night); }
+/* clip, not hidden: a hidden box can still be scrolled by focus or scrollIntoView, which would slide the whole report sideways
+   to reveal the parked findings sheet */
+.rv .stagebox { position: absolute; inset: 0; overflow: hidden; overflow: clip; }
+.rv .stage, .rv .map, .rv .plan { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.rv .map { opacity: 0; pointer-events: none; transition: opacity .5s var(--ease); background: var(--night); }
+.rv[data-view="storm"] .map { opacity: 1; pointer-events: auto; }
+.rv .gmap { position: absolute; inset: 0; background: var(--night); }
+/* Google's logo and terms sit at the bottom edge of its map; keep them clear of the timeline */
+.rv[data-g3d] .gmap, .rv[data-g3d] .stage { bottom: auto; height: calc(100% - var(--tl-h)); }
+.rv[data-g3d] .stage { pointer-events: none; }
+.rv .plan { opacity: 0; pointer-events: none; transition: opacity .35s var(--ease); background: var(--night); touch-action: none; cursor: grab; }
+.rv[data-view="plan"] .plan { opacity: 1; pointer-events: auto; }
+.rv[data-view="plan"] .overlay, .rv[data-view="plan"] .compass { display: none; }
+.rv[data-view="storm"] .overlay, .rv[data-view="storm"] .legend, .rv[data-view="storm"] .chips, .rv[data-view="storm"] .lay,
+.rv[data-view="storm"] .compass { display: none; }
+.rv .overlay { position: absolute; inset: 0; pointer-events: none; }
+.rv p { margin: 0; }
+
+/* shared bits */
+.rv .round { flex: none; width: 36px; height: 36px; padding: 0; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%;
+  background: var(--glass); -webkit-backdrop-filter: blur(24px) saturate(1.3); backdrop-filter: blur(24px) saturate(1.3); color: var(--ink); cursor: pointer;
+  transition: background-color .2s var(--ease), border-color .2s var(--ease), color .2s var(--ease), transform .2s var(--ease); }
+.rv .round:hover { background: rgba(40, 46, 54, .7); border-color: rgba(255, 255, 255, .16); }
+.rv .round:active { transform: scale(.94); }
+.rv .round[aria-pressed="true"], .rv .round[aria-expanded="true"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.rv kbd { display: inline-block; min-width: 20px; padding: 3px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px;
+  font: 500 10.5px/1 var(--f-data); color: var(--muted); text-align: center; }
+.rv .sev { flex: none; display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+
+/* ---- hero: what the selected hour feels like, top-left, no card ---- */
+.rv .hero { position: absolute; z-index: 2; left: 0; top: 0; isolation: isolate; pointer-events: none;
+  padding: var(--pad) 80px 64px var(--pad); max-width: min(580px, calc(100% - var(--side-w) - 2 * var(--pad))); }
+/* scrim: darkens and softly blurs whatever the scene shows behind the text, fading out toward the scene */
+.rv .hero::before { content: ""; position: absolute; z-index: -1; inset: 0 -140px -110px 0; pointer-events: none;
+  background: radial-gradient(farthest-side at 0 0, rgba(6, 8, 11, .9), rgba(6, 8, 11, .85) 50%, rgba(6, 8, 11, .6) 76%, rgba(6, 8, 11, 0));
+  -webkit-backdrop-filter: blur(10px) saturate(.7); backdrop-filter: blur(10px) saturate(.7);
+  -webkit-mask-image: radial-gradient(farthest-side at 0 0, #000 70%, transparent); mask-image: radial-gradient(farthest-side at 0 0, #000 70%, transparent); }
+.rv .hero > * { text-shadow: 0 1px 14px rgba(0, 0, 0, .45); }
+.rv .hero .top { display: flex; align-items: center; gap: 12px; width: max-content; margin-bottom: 30px; pointer-events: auto; }
+.rv .hero .storm { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
+.rv .hero .storm i, .rv .storm-chip i { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: rv-pulse 2.4s var(--ease) infinite; }
+.rv .cond { display: flex; align-items: center; gap: 9px; font: 500 17px/1.2 var(--f-display); letter-spacing: -.015em; }
+.rv .cond .when { margin-left: 3px; padding-left: 11px; border-left: 1px solid rgba(255, 255, 255, .16); font: 400 12px var(--f-data); letter-spacing: .02em; color: var(--muted); }
+.rv .big { margin: 8px 0 0 -.05em; font-size: clamp(76px, 9.5vw, 124px); text-shadow: 0 2px 40px rgba(0, 0, 0, .35); }
+.rv .big small { font-size: .17em; letter-spacing: .01em; margin-left: .35em; }
+.rv .hero .line { margin-top: 6px; font: 400 13px/1.5 var(--f-data); color: var(--muted); }
+.rv .arrow { display: inline-block; vertical-align: -2px; margin-left: 6px; color: var(--ink); transition: transform .35s var(--ease); }
+.rv .hero .say { margin-top: 16px; max-width: 34ch; font: 400 17px/1.45 var(--f-body); letter-spacing: -.012em; color: var(--ink); }
+.rv .hero .addr { margin-top: 24px; max-width: 46ch; font-size: 13px; color: var(--muted); }
+.rv .hero .addr b { color: var(--ink); font-weight: 600; }
+.rv .hero .addr span { display: block; margin-top: 4px; font: 400 11px var(--f-data); letter-spacing: .03em; color: var(--dim); }
+
+/* ---- right column: view switch, layers, cards ---- */
+.rv .side { position: absolute; z-index: 3; top: var(--pad); right: var(--pad); width: var(--side-w); max-height: calc(100% - var(--pad) - var(--tl-h) - 8px);
+  display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+.rv .side > * { pointer-events: auto; }
+.rv .nav { flex: none; display: flex; align-items: center; gap: 8px; }
+.rv .nav .seg { flex: 1; min-width: 0; display: flex; padding: 3px; border-radius: 999px; overflow-x: auto; scrollbar-width: none; }
+.rv .nav .seg::-webkit-scrollbar { display: none; }
+.rv .nav .seg button { flex: 1 0 auto; height: 30px; padding: 0 10px; font-size: 12.5px; }
+.rv .nav .seg .s { display: none; }
+.rv .cardsbtn { display: none; }
+.rv .chips { flex: none; align-self: flex-end; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 7px; border-radius: 18px; }
+.rv .chips .chip { height: 27px; padding: 0 11px 0 9px; }
+.rv .cards { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; border-radius: var(--r-card); }
+.rv .card { flex: none; padding: 14px 16px; }
+.rv .card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rv .card .axis { display: flex; justify-content: space-between; margin-top: 6px; font: 400 10px var(--f-data); letter-spacing: .04em; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* wind card, after a "wind status" widget: the number, a 24 h dot matrix with the sustained line, the storm spread */
+.rv .wind .dir { display: inline-flex; align-items: center; gap: 6px; font: 400 12px var(--f-data); color: var(--muted); }
+.rv .wind .dir .arrow { margin: 0; }
+.rv .wind .now { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 6px 0 10px; }
+.rv .wind .now .num { font-size: 48px; }
+.rv .wind dl { margin: 0 0 4px; display: grid; gap: 5px; }
+.rv .wind dl div { display: flex; align-items: baseline; justify-content: flex-end; gap: 10px; }
+.rv .wind dt { display: inline-flex; align-items: center; gap: 6px; font: 500 10px var(--f-data); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.rv .wind dd { margin: 0; min-width: 50px; text-align: right; font: 400 13px var(--f-data); font-variant-numeric: tabular-nums; }
+.rv .matrix { display: block; width: 100%; height: auto; }
+.rv .matrix circle { transition: fill .25s var(--ease); }
+.rv .matrix .on { fill: rgba(243, 245, 247, .8); }
+.rv .matrix .off { fill: rgba(255, 255, 255, .07); }
+.rv .matrix .sel { fill: var(--accent); }
+.rv .matrix .sus { fill: none; stroke: var(--muted); stroke-width: 1.25; vector-effect: non-scaling-stroke; stroke-linecap: round; }
+.rv .spread { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.rv .spread svg { display: block; width: 100%; height: auto; margin-top: 8px; overflow: visible; }
+.rv .spread circle { fill: rgba(243, 245, 247, .82); transition: transform .4s var(--ease); }
+.rv .spread circle.med { fill: var(--accent); }
+.rv .spread .base { stroke: rgba(255, 255, 255, .1); }
+.rv .wind .kl { width: 12px; height: 1.25px; background: var(--muted); }
+
+/* risks card */
+.rv .risks ul { list-style: none; margin: 8px -8px 0; padding: 0; }
+.rv .risks li button { width: 100%; display: grid; grid-template-columns: 7px minmax(0, 1fr) auto 15px; align-items: center; gap: 12px; padding: 9px 8px;
+  border: 0; border-radius: 12px; background: none; color: var(--ink); text-align: left; cursor: pointer; transition: background-color .2s var(--ease); }
+.rv .risks li button:hover { background: var(--glass-hi); }
+.rv .risks .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 500; }
+.rv .risks .p { font: 400 13px var(--f-data); font-variant-numeric: tabular-nums; }
+.rv .risks li svg { color: var(--dim); transition: color .2s var(--ease), transform .2s var(--ease); }
+.rv .risks li button:hover svg { color: var(--ink); transform: translateX(2px); }
+.rv .risks .all { width: 100%; height: 34px; margin-top: 6px; display: flex; align-items: center; justify-content: center; gap: 10px;
+  border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--ink); font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: background-color .2s var(--ease), border-color .2s var(--ease); }
+.rv .risks .all:hover { background: var(--glass-hi); border-color: rgba(255, 255, 255, .16); }
+
+/* ---- bottom-left: gust legend + compass; status line; Google credits ---- */
+.rv .lower { position: absolute; z-index: 2; left: var(--pad); bottom: calc(var(--tl-h) + 6px); display: flex; align-items: flex-end; gap: 10px; pointer-events: none; }
+.rv .legend { width: 236px; padding: 10px 12px 8px; display: grid; gap: 7px; border-radius: var(--r-inner); }
+.rv .legend .lbl { font-size: 10px; }
+.rv .legend .ramp { height: 4px; border-radius: 2px; }
+.rv .legend .ticks { display: flex; justify-content: space-between; font: 400 10px var(--f-data); color: var(--muted); font-variant-numeric: tabular-nums; }
+.rv .compass { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; }
+.rv .compass .needle { fill: var(--accent); }
+.rv .compass .n { fill: var(--muted); font-family: var(--f-data); }
+.rv .credits { position: absolute; z-index: 2; right: var(--pad); bottom: calc(var(--tl-h) + 6px); max-width: 50%; pointer-events: none; text-align: right;
+  font: 10px/1.4 var(--f-body); color: rgba(255, 255, 255, .82); text-shadow: 0 1px 2px rgba(0, 0, 0, .8); }
+.rv .credits::before { content: "Google  "; font-weight: 700; }
+/* the Google 3D map ends above the timeline and puts its logo in that corner */
+.rv[data-g3d] .lower { bottom: calc(var(--tl-h) + 36px); }
+
+/* ---- timeline: the median gust threading glass nodes over a halftone 5-95% band ---- */
+.rv .tl { position: absolute; z-index: 1; left: 0; right: 0; bottom: 0; height: var(--tl-h); isolation: isolate;
+  padding: 10px var(--pad) 14px; display: grid; grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: 134px auto; column-gap: 16px; row-gap: 8px; }
+.rv .tl::before { content: ""; position: absolute; z-index: -1; inset: -72px 0 0; pointer-events: none;
+  background: linear-gradient(to top, rgba(6, 8, 11, .95), rgba(6, 8, 11, .86) 55%, rgba(6, 8, 11, 0)); }
+.rv[data-g3d] .tl::before { inset: 0; background: var(--night); }
+.rv .tl .play { width: 44px; height: 44px; align-self: start; margin-top: 61px; }
+.rv .track { position: relative; height: 134px; cursor: ew-resize; touch-action: none; -webkit-user-select: none; user-select: none; border-radius: 10px; outline-offset: 2px; }
+.rv .track svg { display: block; overflow: visible; }
+.rv .tl .grid line { stroke: rgba(255, 255, 255, .05); }
+.rv .tl .grid text { fill: var(--dim); font: 400 9.5px var(--f-data); }
+.rv .tl .day { stroke: rgba(255, 255, 255, .14); stroke-dasharray: 2 3; }
+.rv .tl .band { fill: url(#rv-ht); opacity: .34; }
+.rv .tl .roof { fill: none; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 5 4; opacity: .6; }
+.rv .tl .mid { fill: none; stroke: var(--ink); stroke-width: 1.6; stroke-linecap: round; stroke-dasharray: 1; animation: rv-draw 1s var(--ease) .2s both; }
+.rv .tl .rain { fill: #8fbfee; opacity: .75; }
+.rv .tl .ghost line { stroke: rgba(255, 255, 255, .22); }
+.rv .tl .ghost circle { fill: var(--ink); }
+.rv .tl .hair { stroke: var(--accent); stroke-opacity: .5; transition: transform .25s var(--ease); }
+.rv .tl .lab text { text-anchor: middle; }
+.rv .tl .lab .hr { fill: var(--dim); font: 500 10px var(--f-data); letter-spacing: .06em; text-transform: uppercase; transition: fill .2s var(--ease); }
+.rv .tl .lab .v { fill: var(--ink); font: 200 21px var(--f-display); letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.rv .tl .lab[data-on] .hr { fill: var(--accent); }
+.rv .tl .nd { transition: opacity .2s var(--ease); }
+.rv .tl .nd[data-on] { opacity: 0; }
+.rv .tl .node { color: var(--muted); animation: rv-pop .45s var(--ease) both; }
+.rv .tl .node circle { fill: rgba(14, 18, 24, .94); stroke: rgba(255, 255, 255, .16); }
+.rv .tl .sel { color: var(--accent); transition: transform .25s var(--ease); }
+.rv .tl .sel > circle:first-child { animation: rv-breathe 3s ease-in-out infinite; }
+.rv .tl .sel .ring { fill: #0a1716; stroke: var(--accent); stroke-width: 1.5; }
+.rv .tl-key { grid-column: 2; min-width: 0; display: flex; align-items: center; gap: 14px; overflow: hidden; white-space: nowrap;
+  font: 400 10px var(--f-data); letter-spacing: .05em; color: var(--dim); }
+.rv .tl-key span { display: inline-flex; align-items: center; gap: 6px; }
+.rv .tl-key .k { display: inline-block; width: 14px; height: 0; }
+.rv .tl-key .k.mid { border-top: 1.6px solid var(--ink); }
+.rv .tl-key .k.band { height: 8px; background: radial-gradient(circle, rgba(255, 255, 255, .6) .9px, transparent 1.2px) 0 0 / 4px 4px; }
+.rv .tl-key .k.roof { border-top: 1.2px dashed var(--accent); }
+.rv .tl-key .k.rain { width: 4px; height: 9px; background: radial-gradient(circle, #8fbfee 1.3px, transparent 1.6px) 0 0 / 4px 4.5px; }
+.rv .tl-key .qk { margin-left: auto; }
+.rv .qk { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: none;
+  font: 500 11px/1 var(--f-data); color: var(--muted); cursor: pointer; transition: color .2s var(--ease), border-color .2s var(--ease); }
+.rv .qk:hover { color: var(--ink); border-color: rgba(255, 255, 255, .22); }
+
+/* keyboard shortcuts */
+.rv .hint { position: absolute; z-index: 7; right: var(--pad); bottom: calc(var(--tl-h) + 4px); width: 264px; padding: 14px 16px 16px; border-radius: 18px;
+  background: rgba(11, 14, 19, .86); animation: rv-up .25s var(--ease) both; }
+.rv .hint header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.rv .hint .x { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.rv .hint .x:hover { color: var(--ink); background: var(--glass-hi); }
+.rv .hint dl { margin: 0; display: grid; gap: 8px; }
+.rv .hint dl div { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 10px; }
+.rv .hint dd { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* ---- findings sheet ---- */
+.rv .sheet { position: absolute; z-index: 6; top: var(--pad); right: var(--pad); bottom: calc(var(--tl-h) + 4px); width: 420px; max-width: calc(100% - 2 * var(--pad));
+  display: flex; flex-direction: column; overflow: hidden; background: rgba(11, 14, 19, .86);
+  transition: transform .45s var(--ease), opacity .3s var(--ease), visibility 0s; }
+.rv .sheet[data-open="false"] { transform: translateX(calc(100% + var(--pad) + 12px)); opacity: 0; visibility: hidden; pointer-events: none;
+  transition: transform .4s var(--ease), opacity .3s var(--ease), visibility 0s .4s; }
+.rv .hud { position: relative; isolation: isolate; flex: none; overflow: hidden; padding: 20px 20px 16px; border-bottom: 1px solid var(--line); }
+.rv .hud .halftone { z-index: -1; opacity: .7; -webkit-mask-image: radial-gradient(farthest-corner at 100% 0, #000 8%, rgba(0, 0, 0, .3) 45%, transparent 75%);
+  mask-image: radial-gradient(farthest-corner at 100% 0, #000 8%, rgba(0, 0, 0, .3) 45%, transparent 75%); }
+.rv .storm-chip { display: flex; align-items: center; gap: 9px; min-width: 0; font: 500 10.5px var(--f-data); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.rv .storm-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv .hud h1 { max-width: 18ch; margin: 12px 0 0; font: 500 26px/1.12 var(--f-display); letter-spacing: -.03em; }
+.rv .figs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+.rv .fig .v { font-size: 30px; white-space: nowrap; }
+.rv .fig .v small { font-size: 11px; }
+.rv .fig .lbl { margin-top: 6px; font-size: 9.5px; letter-spacing: .08em; }
+.rv .summary { margin-top: 14px; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.rv .summary b { color: var(--ink); font-weight: 500; }
+.rv .tabs { flex: none; display: flex; align-items: center; gap: 2px; padding: 8px 10px 8px 8px; border-bottom: 1px solid var(--line); }
+.rv .tabs button[role="tab"] { flex: 1; height: 32px; border: 0; border-radius: 999px; background: none; color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: color .2s var(--ease), background-color .2s var(--ease); }
+.rv .tabs button[role="tab"]:hover { color: var(--ink); }
+.rv .tabs button[aria-selected="true"] { color: var(--ink); background: rgba(255, 255, 255, .08); }
+.rv .tabs .x { width: 32px; height: 32px; margin-left: 6px; }
+.rv .pane { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 4px 20px 20px; }
+.rv .risk { border-bottom: 1px solid var(--line); }
+.rv .risk > button { width: 100%; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 9px 12px; padding: 14px 0 12px;
+  border: 0; background: none; color: var(--ink); text-align: left; cursor: pointer; }
+.rv .risk .t { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; }
+.rv .risk .p { font: 400 14px var(--f-data); font-variant-numeric: tabular-nums; }
+.rv .bar { grid-column: 1 / -1; position: relative; height: 3px; overflow: hidden; border-radius: 3px; background: rgba(255, 255, 255, .06); }
+.rv .bar i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
+.rv .risk .more { padding: 0 0 16px; font-size: 13px; color: var(--muted); animation: rv-fade .3s var(--ease) both; }
+.rv .risk .more p { margin: 0 0 10px; }
+.rv .risk .more p:first-child { color: var(--ink); }
+.rv .calc { width: 100%; margin: 2px 0 12px; border-collapse: collapse; font-size: 12.5px; }
+.rv .calc td { padding: 6px 0; border-top: 1px dashed var(--line); vertical-align: top; }
+.rv .calc td:last-child { padding-left: 12px; text-align: right; font: 400 12px var(--f-data); color: var(--ink); }
+.rv .sub { margin: 22px 0 8px; font: 600 15px var(--f-display); letter-spacing: -.02em; }
+.rv .pane ul { margin: 0; padding-left: 18px; }
+.rv .pane li { margin: 0 0 8px; }
+.rv .pane li::marker { color: var(--faint); }
+.rv .alert { margin: 8px 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: var(--r-inner);
+  background: color-mix(in srgb, var(--warn) 7%, transparent); font-size: 13px; }
+.rv .alert b { color: var(--warn); font-weight: 600; }
+.rv .step { display: grid; grid-template-columns: 28px 1fr; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.rv .step b { display: block; margin-bottom: 3px; color: var(--ink); font-weight: 600; }
+.rv .step .n { padding-top: 3px; font: 500 11px var(--f-data); color: var(--accent); }
+.rv .pane a { color: var(--accent); }
+.rv .pane code { font: 12px var(--f-data); color: var(--ink); }
+
+/* ---- in-scene labels and tree tooltip (the scene creates .tag3d) ---- */
+.rv .tag3d { position: absolute; left: 0; top: 0; pointer-events: none; padding: 4px 9px; border: 1px solid rgba(255, 255, 255, .14); border-radius: 999px;
+  background: rgba(10, 14, 19, .76); font: 500 11.5px var(--f-body); color: #fff; white-space: nowrap; }
+.rv .tag3d[hidden] { display: none; }
+.rv .tip { position: absolute; z-index: 5; width: 256px; padding: 12px 14px; pointer-events: none; border-radius: var(--r-inner); background: rgba(11, 14, 19, .86);
+  font-size: 12.5px; animation: rv-fade .15s var(--ease) both; }
+.rv .tip b { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font: 600 14px var(--f-display); letter-spacing: -.015em; }
+.rv .tip b svg { color: var(--muted); }
+.rv .tip table { width: 100%; border-collapse: collapse; }
+.rv .tip td { padding: 3px 0; color: var(--muted); }
+.rv .tip td:last-child { text-align: right; color: var(--ink); font: 400 12px var(--f-data); font-variant-numeric: tabular-nums; }
+
+/* ---- entrance: hero lines rise in turn, cards slide in, the gust line draws itself ---- */
+@keyframes rv-up { from { opacity: 0; transform: translateY(10px); } }
+@keyframes rv-in { from { opacity: 0; transform: translateX(16px); } }
+@keyframes rv-fade { from { opacity: 0; } }
+@keyframes rv-pop { from { opacity: 0; transform: scale(.5); } }
+@keyframes rv-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes rv-pulse { 0% { box-shadow: 0 0 0 0 rgba(111, 227, 211, .5); } 70%, 100% { box-shadow: 0 0 0 7px rgba(111, 227, 211, 0); } }
+@keyframes rv-breathe { 0%, 100% { opacity: .7; transform: scale(.88); } 50% { opacity: 1; transform: scale(1.08); } }
+.rv .hero > * { animation: rv-up .5s var(--ease) both; }
+.rv .hero > :nth-child(2) { animation-delay: .05s; }
+.rv .hero > :nth-child(3) { animation-delay: .1s; }
+.rv .hero > :nth-child(4) { animation-delay: .15s; }
+.rv .hero > :nth-child(5) { animation-delay: .2s; }
+.rv .hero > :nth-child(6) { animation-delay: .25s; }
+.rv .hero > :nth-child(7) { animation-delay: .3s; }
+.rv .hero > :nth-child(8) { animation-delay: .35s; }
+.rv .nav, .rv .chips { animation: rv-in .45s var(--ease) .15s both; }
+.rv .cards > * { animation: rv-in .5s var(--ease) .3s both; }
+.rv .cards > :nth-child(2) { animation-delay: .4s; }
+.rv .lower { animation: rv-fade .6s var(--ease) .45s both; }
+.rv .tl { animation: rv-up .5s var(--ease) .1s both; }
+
+/* short laptop screens: drop the storm-spread strip so the risks card still fits under the wind card */
+@media (max-height: 820px) and (min-width: 961px) { .rv .spread { display: none; } }
+/* short laptop screens: the hero runs into the legend and the Google status note; drop the two least essential lines */
+@media (max-height: 780px) and (min-width: 961px) { .rv .hero .addr { display: none; } }
+
+/* ---- tablet and phone: the cards leave the scene and open as a sheet from a dock above the timeline ---- */
+@media (max-width: 960px) {
+  .rv .hero { max-width: min(580px, 100%); }
+  .rv .side { top: auto; left: auto; bottom: var(--tl-h); width: min(420px, calc(100% - 2 * var(--pad))); flex-direction: column-reverse;
+    max-height: calc(100% - var(--tl-h) - 72px); }
+  .rv .cardsbtn { display: grid; }
+  .rv .cards { display: none; }
+  .rv .side[data-cards="true"] .cards { display: flex; }
+  .rv .credits { bottom: calc(var(--tl-h) + 40px); }
+  /* legend and status lift clear of the dock row */
+  .rv .lower, .rv[data-g3d] .lower { bottom: calc(var(--tl-h) + 40px); }
+}
+/* phone: hero across the top, the dock spans the width */
+@media (max-width: 720px) {
+  .rv { --pad: 12px; --tl-h: 192px; }
+  .rv .hero { right: 0; max-width: none; padding: 12px 16px 44px 12px; }
+  .rv .hero::before { inset: 0 0 -40px; background: linear-gradient(to bottom, rgba(6, 8, 11, .9), rgba(6, 8, 11, .7) 60%, rgba(6, 8, 11, 0));
+    -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+  .rv .hero .top { margin-bottom: 14px; }
+  .rv .hero .storm { margin-bottom: 8px; }
+  .rv .cond { font-size: 15px; }
+  .rv .big { font-size: 72px; margin-top: 4px; }
+    .rv .hero .line { font-size: 12px; }
+  .rv .hero .say { margin-top: 8px; font-size: 14px; }
+  .rv .hero .addr { margin-top: 8px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rv .hero .addr span { display: none; }
+  .rv .side { left: var(--pad); width: auto; }
+  .rv .nav .seg button { padding: 0 9px; font-size: 12.5px; }
+  .rv .nav .seg .l { display: none; }
+  .rv .nav .seg .s { display: inline; }
+  /* the Google 3D map stops above the dock so its logo stays visible */
+  .rv[data-g3d] .gmap, .rv[data-g3d] .stage { height: calc(100% - var(--tl-h) - 40px); }
+  .rv .lower { display: none; }
+  .rv .credits { max-width: 70%; }
+  .rv .tl { grid-template-columns: 40px minmax(0, 1fr); column-gap: 10px; padding-bottom: 12px; }
+  .rv .tl::before { inset: -40px 0 0; }
+  .rv .tl .play { width: 40px; height: 40px; margin-top: 63px; }
+  .rv .tl-key { grid-column: 1 / -1; gap: 4px 12px; flex-wrap: wrap; white-space: normal; }
+  .rv .qk { display: none; }
+  .rv .sheet { inset: 8px; width: auto; max-width: none; }
+  .rv .sheet[data-open="false"] { transform: translateY(calc(100% + 16px)); }
+  .rv .hud h1 { font-size: 22px; }
+  .rv .fig .v { font-size: 24px; }
+}
+@media (hover: none) { .rv kbd, .rv .qk { display: none; } }

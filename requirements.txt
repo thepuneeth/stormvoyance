@@ -1,0 +1,18 @@
+annotated-types==0.8.0
+anyio==4.15.1
+click==8.5.0
+fastapi==0.115.6
+h11==0.16.0
+idna==3.20
+laspy==2.7.0
+lazrs==0.8.2
+numpy==2.5.4
+pillow==12.3.0
+pydantic==2.14.0
+pydantic_core==2.50.0
+scipy==1.18.1
+starlette==0.41.3
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.32.1
+torch==2.14.1        # optional: Apple-GPU wind solver (cfd.solve_metal); without it the numpy solver runs

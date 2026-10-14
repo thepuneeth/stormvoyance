@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+report-*.html
+report-*.json
+.cache/
+cache/
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+.DS_Store

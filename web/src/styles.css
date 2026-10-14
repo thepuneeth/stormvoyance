@@ -1,0 +1,87 @@
+/* StormVoyance, "Halftone storm": near-black, monochrome, glass, one accent. Dark only, on purpose.
+   Token names are an API: three.js code reads them with getComputedStyle (report/model.ts css()). Rename nothing.
+   Colour is information: white/grey for everything, --accent for selected / now / brand, ok/warn/bad only for risk severity.
+   Type scale (px): 11 12 13 14 16 20 28 44 72 120. Screen styles live next to each screen (Picker, Loading, report/). */
+:root {
+  --night: #06080b; --ink: #f3f5f7; --muted: #9aa3ad; --faint: #5d6670; --line: rgba(255, 255, 255, .08);
+  --glass: rgba(16, 20, 26, .58); --glass-hi: rgba(255, 255, 255, .06);
+  --accent: #6fe3d3; --on-accent: #04201c; --ok: #7ad99a; --warn: #f2b84b; --bad: #ff6b57;
+  --sky-top: #0b0f14; --sky-bot: #1b232c; --fog: #141a21;
+  --f-display: "Geist", system-ui, sans-serif; --f-body: "Geist", system-ui, sans-serif;
+  --f-data: "Geist Mono", ui-monospace, Menlo, monospace;
+  --r-card: 22px; --r-inner: 14px; --ease: cubic-bezier(.2, .8, .2, 1);
+  color-scheme: dark; accent-color: var(--accent);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .14) transparent; }
+html, body, #root { height: 100%; margin: 0; }
+html { background: var(--night); -webkit-text-size-adjust: 100%; }
+body { background: var(--night); color: var(--ink); font: 400 14px/1.5 var(--f-body); letter-spacing: -.005em;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+h1, h2, h3, h4 { font-family: var(--f-display); font-weight: 600; letter-spacing: -.025em; line-height: 1.15; text-wrap: balance; }
+p { text-wrap: pretty; }
+button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+a { color: inherit; text-underline-offset: .2em; text-decoration-thickness: 1px; }
+::selection { background: color-mix(in srgb, var(--accent) 32%, transparent); color: var(--ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+input:not([type]), input[type="text"], input[type="search"] {
+  height: 44px; min-width: 0; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--r-inner);
+  background: var(--glass-hi); transition: border-color .2s var(--ease), background-color .2s var(--ease), box-shadow .2s var(--ease); }
+input::placeholder { color: color-mix(in srgb, var(--muted) 70%, var(--faint)); opacity: 1; }
+input:hover { border-color: rgba(255, 255, 255, .14); }
+input:focus { background: rgba(255, 255, 255, .08); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+input:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+
+/* frosted card: blur, hairline border, a 1px top highlight, no drop shadow */
+.glass { background: var(--glass); -webkit-backdrop-filter: blur(24px) saturate(1.3); backdrop-filter: blur(24px) saturate(1.3);
+  border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
+
+/* labels: mono caps. Slightly brighter than --faint so 11px text keeps 5:1 contrast on the night background. */
+.lbl { font: 500 11px/1.3 var(--f-data); letter-spacing: .12em; text-transform: uppercase; color: color-mix(in srgb, var(--muted) 55%, var(--faint)); }
+
+/* display numerals: huge and thin (meant for 28px and up); <small> inside carries the unit */
+.num { font-family: var(--f-display); font-weight: 200; letter-spacing: -.04em; line-height: .92; font-variant-numeric: tabular-nums; }
+.num small { font-size: max(.3em, 12px); font-weight: 400; letter-spacing: 0; color: var(--muted); margin-left: .2em; }
+
+.primary, .ghost { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 999px; cursor: pointer;
+  white-space: nowrap; font-weight: 500; transition: background-color .2s var(--ease), border-color .2s var(--ease), box-shadow .2s var(--ease), transform .2s var(--ease), opacity .2s; }
+.primary { height: 44px; padding: 0 20px; border: 0; background: var(--ink); color: var(--night); font-size: 14px; letter-spacing: -.01em; }
+.primary:hover { box-shadow: 0 0 0 4px rgba(255, 255, 255, .1); }
+.ghost { height: 36px; padding: 0 16px; border: 1px solid var(--line); background: none; color: var(--ink); font-size: 13px; }
+.ghost:hover { background: var(--glass-hi); border-color: rgba(255, 255, 255, .14); }
+.primary:active, .ghost:active { transform: scale(.97); }
+.primary:disabled, .ghost:disabled { opacity: .4; cursor: default; transform: none; box-shadow: none; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px;
+  background: none; color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
+  transition: color .2s var(--ease), background-color .2s var(--ease), border-color .2s var(--ease); }
+.chip:hover { color: var(--ink); border-color: rgba(255, 255, 255, .16); }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.seg { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 999px; }
+.seg button { height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: none; color: var(--muted); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: color .2s var(--ease), background-color .2s var(--ease); }
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: rgba(255, 255, 255, .1); color: var(--ink); }
+
+.err { color: var(--bad); margin: 10px 0 0; font-size: 13px; }
+.note { color: var(--muted); font-size: 13px; margin: 14px 0 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+.brand { display: inline-flex; align-items: center; gap: 8px; font: 600 14px/1 var(--f-display); letter-spacing: -.025em; color: var(--ink); white-space: nowrap; }
+.logo { flex: none; }
+
+/* createHalftone() canvas: fills its positioned parent; the pointer is read from window, so it never blocks the UI */
+.halftone { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+/* Picker and Loading screen rules were removed from here on purpose: each screen now ships its own stylesheet next to its
+   component, so old global names (.search, .recent, .loading-stage, .lcard, .rail, .art, .a-*, .steps ...) can't leak into it. */

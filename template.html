@@ -1,0 +1,606 @@
+<title>__TITLE__</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one full-bleed 3D stage of the real site; everything else floats on it as frosted glass
+   (status top-left, views top-right, findings sheet right, timeline along the bottom). */
+:root {
+  --night: #0a1017; --ink: #e9eef3; --muted: #93a2b1; --line: rgba(205, 222, 240, .13);
+  --glass: rgba(14, 21, 30, .58); --glass-hi: rgba(30, 42, 56, .78); --accent: #5fd0c6;
+  --sky-top: #0b1320; --sky-bot: #223142; --fog: #1a2633;
+  --ok: #6fcf8f; --warn: #f0b44c; --bad: #ff6b5a;
+  --f-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --f-body: "Hanken Grotesk", "Helvetica Neue", system-ui, sans-serif;
+  --f-data: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --night: #dfe6ec; --ink: #13202c; --muted: #4d5d6c; --line: rgba(20, 40, 60, .14);
+  --glass: rgba(248, 251, 253, .7); --glass-hi: rgba(255, 255, 255, .9); --accent: #0b7f78;
+  --sky-top: #8fa6bb; --sky-bot: #d5dee6; --fog: #c3cfd9; --ok: #23854a; --warn: #9a6100; --bad: #c8331f; color-scheme: light; } }
+:root[data-theme="light"] {
+  --night: #dfe6ec; --ink: #13202c; --muted: #4d5d6c; --line: rgba(20, 40, 60, .14);
+  --glass: rgba(248, 251, 253, .7); --glass-hi: rgba(255, 255, 255, .9); --accent: #0b7f78;
+  --sky-top: #8fa6bb; --sky-bot: #d5dee6; --fog: #c3cfd9; --ok: #23854a; --warn: #9a6100; --bad: #c8331f; color-scheme: light; }
+html, body { height: 100%; }
+body { background: var(--night); color: var(--ink); font: 14px/1.5 var(--f-body); }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.app { position: relative; height: 100%; min-height: 640px; overflow: hidden; }
+.stagebox { position: absolute; inset: 0; overflow: hidden; }
+#stage, #map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#map { opacity: 0; pointer-events: none; transition: opacity .5s; background: var(--night); }
+.app[data-view="storm"] #map { opacity: 1; pointer-events: auto; }
+.glass { background: var(--glass); backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid var(--line); border-radius: 14px; }
+.lbl { font: 500 10.5px/1.2 var(--f-data); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+/* status */
+.hud { padding: 14px 16px 4px; flex: none; }
+.storm-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.storm-chip { display: flex; min-width: 0; gap: 9px; align-items: center; font: 500 11px var(--f-data); letter-spacing: .03em; color: var(--muted); }
+.storm-chip i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 22%, transparent); }
+.hud h1 { font: 700 20px/1.15 var(--f-display); margin: 7px 0 0; text-wrap: balance; letter-spacing: -.01em; }
+#summary { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+#summary b { color: var(--ink); font-weight: 600; }
+.figs { display: grid; grid-template-columns: repeat(4, auto); justify-content: space-between; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.fig .v { font: 500 17px/1 var(--f-data); font-variant-numeric: tabular-nums; }
+.fig .v small { font-size: 11px; color: var(--muted); margin-left: 3px; }
+.fig .lbl { margin-top: 5px; font-size: 9.5px; }
+
+/* views + layers */
+.views { position: absolute; right: 16px; top: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; width: 360px; }
+.seg { display: flex; padding: 4px; gap: 2px; width: 100%; }
+.seg button { flex: 1; white-space: nowrap; border: 0; background: none; padding: 7px 6px; border-radius: 10px; cursor: pointer; font-weight: 600; font-size: 13px; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--glass-hi); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+.layers { display: flex; gap: 6px; flex-wrap: wrap; padding: 7px; width: 100%; align-items: center; }
+.chip { border: 1px solid var(--line); background: none; border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: var(--muted); }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: color-mix(in srgb, var(--accent) 65%, transparent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.heights { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }
+
+/* findings sheet */
+.sheet { position: absolute; right: 16px; top: 140px; bottom: 152px; width: 360px; z-index: 4; display: flex; flex-direction: column; overflow: hidden; }
+.tabs { display: flex; align-items: center; gap: 2px; padding: 6px; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; border: 0; background: none; padding: 8px 6px; border-radius: 9px; cursor: pointer; font-weight: 600; color: var(--muted); }
+.tabs button[aria-selected="true"] { color: var(--ink); background: var(--glass-hi); }
+.pane { overflow: auto; padding: 4px 16px 16px; min-height: 0; flex: 1; }
+.risk { border-bottom: 1px solid var(--line); }
+.risk > button { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; text-align: left; background: none; border: 0; padding: 12px 0 11px; cursor: pointer; }
+.risk .t { font-weight: 600; }
+.risk .p { font: 500 15px var(--f-data); font-variant-numeric: tabular-nums; }
+.bar { grid-column: 1 / -1; height: 4px; border-radius: 4px; background: var(--line); position: relative; overflow: hidden; }
+.bar i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
+.risk .more { padding: 0 0 14px; color: var(--muted); font-size: 13px; }
+.risk .more p { margin: 0 0 10px; }
+.risk .more p:first-child { color: var(--ink); }
+.calc { width: 100%; border-collapse: collapse; margin: 2px 0 10px; font-size: 12.5px; }
+.calc td { padding: 5px 0; border-top: 1px dashed var(--line); }
+.calc td:last-child { text-align: right; font-family: var(--f-data); color: var(--ink); padding-left: 10px; }
+.sub { font: 700 15px var(--f-display); margin: 16px 0 6px; }
+.pane ul { margin: 0; padding-left: 18px; }
+.pane li { margin: 0 0 7px; }
+.alert { border-left: 3px solid var(--warn); padding: 6px 10px; margin: 8px 0; background: color-mix(in srgb, var(--warn) 10%, transparent); border-radius: 0 8px 8px 0; font-size: 13px; }
+.step { display: grid; grid-template-columns: 24px 1fr; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.step b { color: var(--ink); display: block; font-weight: 600; margin-bottom: 2px; }
+.step .n { font: 500 11px var(--f-data); color: var(--accent); padding-top: 3px; }
+.pane a { color: var(--accent); }
+.note { color: var(--muted); font-size: 12.5px; }
+
+/* timeline */
+.time { position: absolute; left: 16px; right: 16px; bottom: 16px; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; padding: 10px 14px 8px 10px; align-items: center; }
+#play { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--glass-hi); cursor: pointer; display: grid; place-items: center; }
+#play svg { fill: var(--ink); }
+.readout { display: flex; gap: 6px 16px; flex-wrap: wrap; align-items: baseline; font-size: 13px; color: var(--muted); min-width: 0; }
+.readout b { color: var(--ink); font-family: var(--f-data); font-weight: 500; }
+.readout .when { font: 700 15px var(--f-display); color: var(--ink); }
+#spark { grid-column: 1 / -1; width: 100%; height: 70px; display: block; cursor: ew-resize; touch-action: none; }
+.legend { position: absolute; left: 16px; bottom: 152px; padding: 9px 12px; display: grid; gap: 6px; width: 240px; }
+.legend .ramp { height: 8px; border-radius: 4px; }
+.legend .ticks { display: flex; justify-content: space-between; font: 10.5px var(--f-data); color: var(--muted); }
+.app[data-view="storm"] .legend, .app[data-view="storm"] .layers, .app[data-view="storm"] .compass { display: none; }
+.compass { position: absolute; left: 270px; bottom: 152px; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; }
+
+/* in-scene labels and tooltip */
+.tag3d { position: absolute; left: 0; top: 0; pointer-events: none; font: 600 12px var(--f-body); color: #fff; padding: 3px 8px; border-radius: 7px;
+  background: rgba(10, 16, 23, .74); border: 1px solid rgba(255, 255, 255, .16); white-space: nowrap; }
+.tag3d.push { background: rgba(196, 66, 28, .9); }
+.tag3d.pull { background: rgba(38, 86, 196, .9); }
+#tip { position: absolute; pointer-events: none; padding: 10px 12px; width: 256px; font-size: 12.5px; z-index: 5; }
+#tip b { font: 700 14px var(--f-display); display: block; margin-bottom: 4px; }
+#tip table { width: 100%; border-collapse: collapse; }
+#tip td { padding: 2px 0; color: var(--muted); }
+#tip td:last-child { text-align: right; color: var(--ink); font-family: var(--f-data); }
+
+@media (max-width: 960px) {
+  .app { height: auto; min-height: 0; overflow: visible; }
+  .stagebox { position: relative; height: 82svh; min-height: 560px; }
+  .figs { grid-template-columns: repeat(2, auto); justify-content: start; gap: 10px 24px; }
+  .views { top: auto; bottom: 128px; right: 16px; left: 16px; width: auto; }
+  .legend, .compass { display: none; }
+  .time { right: 16px; }
+  .sheet { position: static; width: auto; margin: 16px; }
+  .pane { overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { #map { transition: none; } }
+</style>
+
+<div class="app" id="app" data-view="site">
+  <div class="stagebox">
+    <canvas id="stage" aria-label="3D model of the house, neighbouring buildings, LiDAR-measured trees and the simulated wind"></canvas>
+    <canvas id="map" aria-label="Storm track map"></canvas>
+    <div class="views">
+      <div class="seg glass" role="group" aria-label="View">
+        <button data-view="site" aria-pressed="true">Wind around you</button>
+        <button data-view="house" aria-pressed="false">House loads</button>
+        <button data-view="storm" aria-pressed="false">Storm track</button>
+      </div>
+      <div class="layers glass" role="group" aria-label="Layers">
+        <button class="chip" data-layer="flow" aria-pressed="true">Airflow</button>
+        <button class="chip" data-layer="slice" aria-pressed="false">Wind map</button>
+        <span class="heights" id="heights" hidden>at
+          <button class="chip" data-h="2" aria-pressed="true">6 ft</button><button class="chip" data-h="8" aria-pressed="false">26 ft</button><button class="chip" data-h="16" aria-pressed="false">52 ft</button></span>
+        <button class="chip" data-layer="risk" aria-pressed="false">Tree risk</button>
+        <button class="chip" data-layer="rain" aria-pressed="true">Rain</button>
+        <button class="chip" id="moreBtn" aria-expanded="false" aria-controls="sheet">Details</button>
+      </div>
+    </div>
+    <div class="legend glass" id="legend"><span class="lbl" id="legendT">Gust speed, mph</span><div class="ramp" id="ramp"></div><div class="ticks" id="ticks"></div></div>
+    <div class="compass glass" aria-hidden="true"><svg width="40" height="40" viewBox="-20 -20 40 40"><g id="needle"><path d="M0-16 5 2 0-1-5 2z" fill="var(--accent)"/><text y="13" x="-3.2" font-size="8" fill="var(--muted)" font-family="IBM Plex Mono, monospace" transform="rotate(180 0 10)">N</text></g></svg></div>
+    <div class="time glass">
+      <button id="play" aria-label="Play timeline"><svg width="16" height="16" viewBox="0 0 16 16"><path id="playIcon" d="M4 2l10 6-10 6z"/></svg></button>
+      <div class="readout" id="readout"></div>
+      <canvas id="spark" aria-label="Hourly gust forecast; drag or use arrow keys to change the hour"></canvas>
+    </div>
+    <div id="tip" class="glass" hidden></div>
+  </div>
+  <aside class="sheet glass" id="sheet" aria-label="Findings" hidden>
+    <section class="hud" aria-live="polite">
+      <div class="storm-chip" id="stormChip"><i></i><span></span></div>
+      <h1 id="verdict">Loading the site model…</h1>
+      <div class="figs" id="figs"></div>
+      <p id="summary"></p>
+    </section>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="risks">Risks</button>
+      <button role="tab" aria-selected="false" data-tab="plan">What to do</button>
+      <button role="tab" aria-selected="false" data-tab="method">How it works</button>
+      <button class="chip" id="sheetX" aria-label="Close" style="flex:none;border:0;font-size:16px">×</button>
+    </div>
+    <div class="pane" id="risks" role="tabpanel"></div>
+    <div class="pane" id="plan" role="tabpanel" hidden></div>
+    <div class="pane" id="method" role="tabpanel" hidden></div>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+"use strict";
+const D = /*__DATA__*/null;
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const S = D.sim, HRS = S.hours, NT = HRS.length, TZ = D.meta.tz, HALF = D.scene.half;
+const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const fmt = (iso, o) => new Intl.DateTimeFormat("en-US", {timeZone: TZ, ...o}).format(new Date(iso));
+const hourLbl = iso => fmt(iso, {weekday: "short", hour: "numeric"});
+const pct = p => p == null ? "n/a" : p < .005 ? "<1%" : p < .1 ? (p * 100).toFixed(1).replace(/\.0$/, "") + "%" : p > .99 ? ">99%" : Math.round(p * 100) + "%";
+const C16 = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+const compass = d => C16[Math.round((((d % 360) + 360) % 360) / 22.5) % 16];
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const ft = m => Math.round(m * 3.281);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const bytes = s => { const b = atob(s), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; };
+const bearing = (la1, lo1, la2, lo2) => { const r = Math.PI / 180, y = Math.sin((lo2 - lo1) * r) * Math.cos(la2 * r),
+  x = Math.cos(la1 * r) * Math.sin(la2 * r) - Math.sin(la1 * r) * Math.cos(la2 * r) * Math.cos((lo2 - lo1) * r); return (Math.atan2(y, x) / r + 360) % 360; };
+// gust colour ramp (mph): sequential and ordered; hue turns warm at the 40 mph "branches start breaking" range
+const RAMP = [[0,[34,62,104]],[10,[38,122,160]],[20,[64,186,170]],[30,[196,224,112]],[40,[250,192,72]],[50,[244,122,60]],[60,[224,60,82]],[80,[168,48,160]]];
+function ramp(v, out){ let i = 1; while (i < RAMP.length - 1 && v > RAMP[i][0]) i++;
+  const [a, ca] = RAMP[i - 1], [b, cb] = RAMP[i], t = clamp((v - a) / (b - a), 0, 1);
+  out[0] = (ca[0] + (cb[0] - ca[0]) * t) / 255; out[1] = (ca[1] + (cb[1] - ca[1]) * t) / 255; out[2] = (ca[2] + (cb[2] - ca[2]) * t) / 255; return out; }
+const rampLin = (v, out) => { ramp(v, out); out[0] **= 2.2; out[1] **= 2.2; out[2] **= 2.2; return out; };   // three.js vertex colours are linear
+const riskCol = p => p < .02 ? css("--ok") : p < .15 ? css("--warn") : css("--bad");
+
+// ---------- shared hour ----------
+const peakIdx = Math.max(0, HRS.findIndex(h => h.t === S.peak.hour));
+let idx = peakIdx; const subs = [];
+const setIdx = i => { idx = clamp(Math.round(i), 0, NT - 1); subs.forEach(f => f(idx)); };
+const W = D.wind;
+const secOf = i => W ? W.sectors[W.hour_sector[i]] : null;
+const I_OPEN = 1 / Math.log(10 / 0.03);
+// local 3-s gust / open-terrain gust = exposure x (mean + 3 sigma) / (1 + 3 I_open)   (same formula as the engine)
+function gustRatio(K, sig, sec, zAgl = 10){ sig = Math.max(sig, K / Math.log(Math.max(zAgl, 1) / sec.z0 + 1)); return sec.exposure * (K + 3 * sig) / (1 + 3 * I_OPEN); }
+
+// ---------- decoded site data ----------
+const TER = (() => { const t = D.scene.terrain; return {n: t.n, dx: t.dx, a: new Int16Array(bytes(t.cm).buffer)}; })();
+function terrH(x, y){ const n = TER.n, fi = clamp((HALF - y) / TER.dx - .5, 0, n - 1.001), fj = clamp((x + HALF) / TER.dx - .5, 0, n - 1.001), i = fi | 0, j = fj | 0, p = fi - i, q = fj - j, a = TER.a;
+  return ((a[i * n + j] * (1 - q) + a[i * n + j + 1] * q) * (1 - p) + (a[(i + 1) * n + j] * (1 - q) + a[(i + 1) * n + j + 1] * q) * p) / 100; }
+if (W) for (const s of W.sectors) { s.U = new Int8Array(bytes(s.u).buffer); s.SG = bytes(s.sig); s.u = s.sig = null; s.N3 = s.nw * s.nw * s.nz; }
+const OUT = new Float32Array(4);
+// world x east, y north, z above house ground -> OUT = [east, north, up, sigma], in units of the inflow wind at 10 m
+function wind(sec, x, y, z){
+  const nw = sec.nw, nz = sec.nz, fc = clamp(nw / 2 + x / sec.dx - .5, 0, nw - 1.001), fr = clamp(nw / 2 - y / sec.dx - .5, 0, nw - 1.001), fk = clamp((z - sec.z_base) / sec.dx - .5, 0, nz - 1.001);
+  const c = fc | 0, r = fr | 0, k = fk | 0, a = fc - c, b = fr - r, e = fk - k, U = sec.U, G = sec.SG, N3 = sec.N3;
+  OUT[0] = OUT[1] = OUT[2] = OUT[3] = 0;
+  for (let dr = 0; dr < 2; dr++) for (let dc = 0; dc < 2; dc++) for (let dk = 0; dk < 2; dk++) {
+    const w = (dr ? b : 1 - b) * (dc ? a : 1 - a) * (dk ? e : 1 - e), o = ((r + dr) * nw + c + dc) * nz + k + dk;
+    OUT[0] += w * U[o]; OUT[1] += w * U[N3 + o]; OUT[2] += w * U[2 * N3 + o]; OUT[3] += w * G[o]; }
+  OUT[0] /= 50; OUT[1] /= 50; OUT[2] /= 50; OUT[3] /= 200; return OUT; }
+function localGust(x, y, zAgl, i = idx){ const sec = secOf(i); if (!sec) return HRS[i].gust[2]; const o = wind(sec, x, y, terrH(x, y) + zAgl);
+  return HRS[i].gust[2] * gustRatio(Math.hypot(o[0], o[1], o[2]), o[3], sec, zAgl); }
+
+// ---------- status ----------
+(function hud(){
+  const m = D.meta, st = m.storm, P = S.probs, pk = S.peak;
+  const cls = st && ({HU: "Hurricane", TS: "Tropical Storm", TD: "Tropical Depression", PTC: "Post-tropical cyclone", PT: "Post-tropical cyclone"}[st.cls] || st.cls);
+  $("#stormChip span").textContent = st ? `${cls} ${st.name} · ${Math.round(st.kt * 1.151)} mph · ${st.mb} mb · advisory ${+st.adv}` : "No tropical cyclone nearby · NWS forecast";
+  const roofPk = Math.max(...HRS.map(h => h.roof ? h.roof[1] : h.gust[2]));
+  const worst = Math.max(P.power, P.tree_hit * 4, P.minor * 6, P.flash, P.creek || 0);
+  $("#verdict").textContent = worst < .05 ? (pk.p50 < 30 ? "Breezy. Low risk to the house." : "Windy, but low risk to the house.")
+    : worst < .3 ? "Some damage possible. Prepare tonight." : worst < .6 ? "Damage likely. Prepare now." : "High impact expected.";
+  let close = "";
+  if (S.official) { const d = S.official.dist_mi, i = d.indexOf(Math.min(...d)); close = `${st.name}'s center passes about <b>${Math.round(d[i])} mi ${compass(bearing(m.lat, m.lon, S.official.lat[i], S.official.lon[i]))}</b> of you around ${fmt(HRS[i].t, {weekday: "short", hour: "numeric"})}. `; }
+  const top = [...D.risks].sort((a, b) => b.p - a.p)[0];
+  $("#summary").innerHTML = `${close}Gusts at your roofline peak near <b>${Math.round(roofPk)} mph</b> around ${fmt(pk.hour, {weekday: "short", hour: "numeric"})}. ` +
+    `Biggest concern: <b>${top.title.toLowerCase()}</b> (${pct(top.p)}).`;
+  $("#figs").innerHTML = [[Math.round(pk.p50), "mph", "peak gust, open"], [Math.round(roofPk), "mph", "at your roof"],
+    [S.rain_total.p50.toFixed(2), "in", "rain"], [pct(P.power), "", "lose power"]]
+    .map(([v, u, l]) => `<div class="fig"><div class="v">${v}${u ? `<small>${u}</small>` : ""}</div><div class="lbl">${l}</div></div>`).join("");
+})();
+
+// ---------- views / layers ----------
+const app = $("#app"), layer = {flow: true, slice: false, risk: false, rain: true}; let sliceH = 2, view = "site";
+const viewSubs = [];
+const changed = () => viewSubs.forEach(f => f(view));
+$$(".seg button").forEach(b => b.onclick = () => { view = b.dataset.view; app.dataset.view = view; $$(".seg button").forEach(x => x.setAttribute("aria-pressed", x === b)); changed(); });
+$$("[data-layer]").forEach(b => b.onclick = () => { layer[b.dataset.layer] = !layer[b.dataset.layer]; b.setAttribute("aria-pressed", layer[b.dataset.layer]); $("#heights").hidden = !layer.slice; changed(); });
+$$("[data-h]").forEach(b => b.onclick = () => { sliceH = +b.dataset.h; $$("[data-h]").forEach(x => x.setAttribute("aria-pressed", x === b)); changed(); });
+$$("[role=tab]").forEach(b => b.onclick = () => { $$("[role=tab]").forEach(x => x.setAttribute("aria-selected", x === b)); $$(".pane").forEach(p => p.hidden = p.id !== b.dataset.tab); });
+const showSheet = v => { $("#sheet").hidden = !v; $("#moreBtn").setAttribute("aria-expanded", v); };
+$("#moreBtn").onclick = () => showSheet($("#sheet").hidden); $("#sheetX").onclick = () => showSheet(false);
+addEventListener("keydown", e => { if (e.key === "Escape") showSheet(false); });
+const setLayer = (k, v) => { layer[k] = v; $(`[data-layer=${k}]`).setAttribute("aria-pressed", v); changed(); };
+if (!W) { $('[data-layer="flow"]').hidden = $('[data-layer="slice"]').hidden = $("#heights").hidden = true; layer.flow = layer.slice = false; }
+
+// ---------- legend ----------
+(function legend(){ const mx = 70; $("#ramp").style.background = `linear-gradient(90deg,${RAMP.filter(r => r[0] <= mx).map(([v, c]) => `rgb(${c}) ${v / mx * 100}%`).join(",")})`;
+  $("#ticks").innerHTML = [0, 10, 20, 30, 40, 50, 60, 70].map(v => `<span>${v}</span>`).join(""); })();
+
+// ---------- 3D site ----------
+(function site3d(){
+  const cv = $("#stage"), box3 = $(".stagebox");
+  const R = new THREE.WebGLRenderer({canvas: cv, antialias: true, powerPreference: "high-performance"});
+  R.setPixelRatio(Math.min(2, devicePixelRatio || 1)); R.outputEncoding = THREE.sRGBEncoding; R.toneMapping = THREE.ACESFilmicToneMapping; R.toneMappingExposure = 1.05;
+  R.shadowMap.enabled = true; R.shadowMap.type = THREE.PCFSoftShadowMap;
+  const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, 1, 1, 3000);
+  const ctl = new THREE.OrbitControls(cam, cv); ctl.enableDamping = true; ctl.maxPolarAngle = Math.PI * .47; ctl.minDistance = 18; ctl.maxDistance = 560; ctl.enableZoom = false;
+  cv.addEventListener("pointerdown", () => ctl.enableZoom = true);       // no scroll hijack until the user engages the scene
+  const P3 = (x, y, z) => new THREE.Vector3(x, z, -y);                  // world (east, north, up) -> three (x, up, -north)
+  function sky(){ const c = document.createElement("canvas"); c.width = 2; c.height = 256; const g = c.getContext("2d"), gr = g.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, css("--sky-top")); gr.addColorStop(1, css("--sky-bot")); g.fillStyle = gr; g.fillRect(0, 0, 2, 256);
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; sc.background = t; sc.fog = new THREE.Fog(new THREE.Color(css("--fog")), 300, 950); }
+  sky(); new MutationObserver(sky).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+  matchMedia("(prefers-color-scheme: light)").addEventListener("change", sky);
+  sc.add(new THREE.HemisphereLight(0xd6e2ef, 0x3b3424, .95));
+  const sun = new THREE.DirectionalLight(0xfff0d8, 1.45); sun.position.set(-170, 230, 110); sun.castShadow = true;
+  Object.assign(sun.shadow.camera, {left: -190, right: 190, top: 190, bottom: -190, near: 10, far: 700}); sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -.0005; sc.add(sun);
+
+  // terrain (USGS 3DEP) draped with the satellite mosaic
+  const satTex = new THREE.TextureLoader().load(D.scene.img); satTex.encoding = THREE.sRGBEncoding; satTex.anisotropy = R.capabilities.getMaxAnisotropy();
+  const n = TER.n, tg = new THREE.PlaneGeometry(2 * HALF, 2 * HALF, n - 1, n - 1); tg.rotateX(-Math.PI / 2);
+  { const p = tg.attributes.position; for (let i = 0; i < p.count; i++) p.setY(i, terrH(p.getX(i), -p.getZ(i))); tg.computeVertexNormals(); }
+  const ground = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({map: satTex, roughness: .95})); ground.receiveShadow = true; sc.add(ground);
+  { let lo = 1e9; for (const v of TER.a) lo = Math.min(lo, v); const sk = new THREE.Mesh(new THREE.BoxGeometry(2 * HALF, 8, 2 * HALF), new THREE.MeshStandardMaterial({color: 0x2b2722, roughness: 1})); sk.position.y = lo / 100 - 4.05; sc.add(sk); }
+
+  // buildings: sided walls, a window row per storey, hip roofs textured from the same imagery
+  function siding(hex){ const c = document.createElement("canvas"); c.width = c.height = 128; const g = c.getContext("2d"); g.fillStyle = hex; g.fillRect(0, 0, 128, 128);
+    for (let y = 0; y < 128; y += 6) { g.fillStyle = "rgba(0,0,0,.08)"; g.fillRect(0, y, 128, 1); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(4, 4); t.encoding = THREE.sRGBEncoding; return t; }
+  const winMat = new THREE.MeshStandardMaterial({color: 0x18222d, roughness: .12, metalness: .5, emissive: 0x3a2a12, emissiveIntensity: .45});
+  const roofMat = new THREE.MeshStandardMaterial({map: satTex, roughness: .85, side: THREE.DoubleSide});
+  function roofGeo(L, W_, zE, zR, base, a, cx, cy){ // hip roof: eave rectangle -> inset top rectangle at ridge height
+    const u = [Math.cos(a), Math.sin(a)], v = [-u[1], u[0]], run = Math.min((zR - zE) * 2, Math.min(L, W_) / 2 - .01);
+    const corner = (sl, sw, inset) => [cx + sl * (L / 2 - inset) * u[0] + sw * (W_ / 2 - inset) * v[0], cy + sl * (L / 2 - inset) * u[1] + sw * (W_ / 2 - inset) * v[1]];
+    const sq = [[1, 1], [-1, 1], [-1, -1], [1, -1]], bot = sq.map(([s, t]) => corner(s, t, -.45)), top = sq.map(([s, t]) => corner(s, t, run));
+    const pos = [], uv = [], push = ([x, y], z) => { pos.push(x, base + z, -y); uv.push((x + HALF) / (2 * HALF), (y + HALF) / (2 * HALF)); };
+    for (let k = 0; k < 4; k++) { const k2 = (k + 1) % 4; push(bot[k], zE - .25); push(bot[k2], zE - .25); push(top[k2], zR); push(bot[k], zE - .25); push(top[k2], zR); push(top[k], zR); }
+    push(top[0], zR); push(top[1], zR); push(top[2], zR); push(top[0], zR); push(top[2], zR); push(top[3], zR);
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2)); g.computeVertexNormals(); return g; }
+  function building(b, isHouse){
+    const eave = isHouse ? D.house.eave_m : Math.max(3, b.h - 1.6), ridge = isHouse ? D.house.ridge_m : b.h + 1.6, base = terrH(b.cx, b.cy) - .15, a = (90 - b.heading) * Math.PI / 180;
+    const tones = ["#d9d3c7", "#c8ccd0", "#ddd4c6", "#c2c7c0", "#e2ddd3"], mat = new THREE.MeshStandardMaterial({map: siding(isHouse ? "#ece6db" : tones[Math.abs(Math.round(b.cx * 7 + b.cy * 3)) % 5]), roughness: .9});
+    const hh = eave + 2, box = new THREE.Mesh(new THREE.BoxGeometry(b.L, hh, b.W), isHouse ? [0, 1, 2, 3, 4, 5].map(() => mat.clone()) : mat);
+    box.position.set(b.cx, base + eave - hh / 2, -b.cy); box.rotation.y = a; box.castShadow = box.receiveShadow = true; sc.add(box);
+    const stories = isHouse ? D.house.stories : Math.max(1, Math.round(eave / 3));
+    for (const [nx, nz, len] of [[1, 0, b.W], [-1, 0, b.W], [0, 1, b.L], [0, -1, b.L]]) {
+      const cnt = Math.max(1, Math.floor(len / 5.2));
+      for (let s = 0; s < stories; s++) for (let w = 0; w < cnt; w++) {
+        const off = (w - (cnt - 1) / 2) * len / cnt, wm = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.45), winMat);
+        wm.position.set(nx ? nx * (b.L / 2 + .03) : off, hh / 2 - eave + s * 3 + 1.7, nz ? nz * (b.W / 2 + .03) : off);
+        wm.rotation.y = nx ? nx * Math.PI / 2 : (nz > 0 ? 0 : Math.PI); box.add(wm); } }
+    const roof = new THREE.Mesh(roofGeo(b.L, b.W, eave, ridge, base, a, b.cx, b.cy), roofMat); roof.castShadow = roof.receiveShadow = true; sc.add(roof);
+    return box; }
+  const HS = D.house, houseBox = building({cx: 0, cy: 0, L: HS.L, W: HS.W, heading: HS.heading}, true);
+  for (const b of D.buildings) building(b, false);
+
+  // USGS LiDAR vegetation returns, coloured from the imagery; trees cut since the survey are already removed
+  let veg = null, vegBase = null, vegTree = null;
+  if (D.scene.veg && D.scene.veg.n) {
+    const V = D.scene.veg, xyz = new Int16Array(bytes(V.xyz).buffer), rgb = bytes(V.rgb), N = V.n, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) { const x = xyz[3 * i] / 10, y = xyz[3 * i + 1] / 10, z = xyz[3 * i + 2] / 10; pos[3 * i] = x; pos[3 * i + 1] = z; pos[3 * i + 2] = -y;
+      const sh = .5 + .7 * clamp((z - terrH(x, y)) / 22, 0, 1);              // simple self-shading: darker deep in the crown
+      col[3 * i] = Math.pow(rgb[3 * i] / 255, 2.2) * sh * 1.3; col[3 * i + 1] = Math.pow(rgb[3 * i + 1] / 255, 2.2) * sh * 1.35; col[3 * i + 2] = Math.pow(rgb[3 * i + 2] / 255, 2.2) * sh; }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    const dot = document.createElement("canvas"); dot.width = dot.height = 32; { const x = dot.getContext("2d"); x.fillStyle = "#fff"; x.beginPath(); x.arc(16, 16, 14, 0, 7); x.fill(); }
+    veg = new THREE.Points(g, new THREE.PointsMaterial({size: 1.0, vertexColors: true, map: new THREE.CanvasTexture(dot), alphaTest: .5}));
+    sc.add(veg); vegBase = col.slice();
+    vegTree = new Int32Array(N).fill(-1); const cell = 4, grid = new Map();
+    D.trees.forEach((t, k) => { const key = Math.floor(t.x / cell) + "," + Math.floor(t.y / cell); if (!grid.has(key)) grid.set(key, []); grid.get(key).push(k); });
+    for (let i = 0; i < N; i++) { const x = pos[3 * i], y = -pos[3 * i + 2], gx = Math.floor(x / cell), gy = Math.floor(y / cell); let best = -1, bd = 1e9;
+      for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) for (const k of grid.get((gx + a) + "," + (gy + b)) || []) { const t = D.trees[k], d = Math.hypot(t.x - x, t.y - y);
+        if (d < t.cw / 2 + 1.5 && d < bd) { bd = d; best = k; } } vegTree[i] = best; }
+  }
+  function paintVeg(){ if (!veg) return; const c = veg.geometry.attributes.color;
+    if (!layer.risk || view === "storm") { c.array.set(vegBase); c.needsUpdate = true; return; }
+    const lin = h => new THREE.Color(h).convertSRGBToLinear(), bad = lin(css("--bad")), warn = lin(css("--warn")), calm = lin("#55635c"), small = lin("#2c3431");
+    for (let i = 0; i < vegTree.length; i++) { const t = D.trees[vegTree[i]], p = t ? (t.p_fail || 0) : 0;
+      const C = !t || t.h < 8 ? small : p < .002 ? calm : p < .02 ? calm.clone().lerp(warn, (p - .002) / .018) : warn.clone().lerp(bad, clamp((p - .02) / .1, 0, 1));
+      c.array[3 * i] = C.r; c.array[3 * i + 1] = C.g; c.array[3 * i + 2] = C.b; } c.needsUpdate = true; }
+
+  // wind map: terrain-following sheet at a chosen height, coloured by the local gust from the CFD field
+  const SN = 100, sg = new THREE.PlaneGeometry(280, 280, SN - 1, SN - 1); sg.rotateX(-Math.PI / 2);
+  sg.setAttribute("color", new THREE.BufferAttribute(new Float32Array(SN * SN * 3), 3));
+  const sheet = new THREE.Mesh(sg, new THREE.MeshBasicMaterial({vertexColors: true, transparent: true, opacity: .42, depthWrite: false, side: THREE.DoubleSide, toneMapped: false}));
+  sheet.renderOrder = 2; sc.add(sheet);
+  function paintSheet(){ sheet.visible = !!(W && layer.slice && view !== "storm"); if (!sheet.visible) return;
+    const p = sg.attributes.position, c = sg.attributes.color, rgb = [0, 0, 0], sec = secOf(idx);
+    for (let i = 0; i < p.count; i++) { const x = p.getX(i), y = -p.getZ(i), g0 = terrH(x, y); p.setY(i, g0 + sliceH);
+      const o = wind(sec, x, y, g0 + sliceH), K = Math.hypot(o[0], o[1], o[2]);
+      if (K < .02) { c.setXYZ(i, .004, .005, .006); continue; }
+      rampLin(HRS[idx].gust[2] * gustRatio(K, o[3], sec, sliceH), rgb); c.setXYZ(i, rgb[0], rgb[1], rgb[2]); }
+    p.needsUpdate = c.needsUpdate = true; }
+
+  // airflow: tracers advected through the CFD mean velocity field, drawn as fading streaks
+  const NP = RM ? 0 : 3000, TL = 12, segs = new Float32Array(NP * (TL - 1) * 6), scol = new Float32Array(NP * (TL - 1) * 6);
+  const lg = new THREE.BufferGeometry(); lg.setAttribute("position", new THREE.BufferAttribute(segs, 3)); lg.setAttribute("color", new THREE.BufferAttribute(scol, 3));
+  const lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: .95, depthWrite: false, toneMapped: false}));
+  lines.frustumCulled = false; sc.add(lines);
+  const pp = new Float32Array(NP * 3), trail = new Float32Array(NP * TL * 3), life = new Float32Array(NP);
+  function spawn(i, anywhere){ const sec = secOf(idx), a = (sec ? sec.dir : HRS[idx].dir) * Math.PI / 180, ux = -Math.sin(a), uy = -Math.cos(a);
+    const s = (Math.random() * 2 - 1) * 135, t = anywhere ? (Math.random() * 2 - 1) * 135 : -138 + Math.random() * 40;
+    const x = t * ux - s * uy, y = t * uy + s * ux, z = terrH(x, y) + .8 + Math.pow(Math.random(), 1.7) * 28;
+    pp[3 * i] = x; pp[3 * i + 1] = y; pp[3 * i + 2] = z; for (let k = 0; k < TL; k++) trail.set([x, y, z], (i * TL + k) * 3); life[i] = 5 + Math.random() * 9; }
+  for (let i = 0; i < NP; i++) spawn(i, true);
+  let tick = 0;
+  function flow(dt){ lines.visible = !!(W && layer.flow && view !== "storm") && NP > 0; if (!lines.visible) return;
+    const sec = secOf(idx), Uref = HRS[idx].sust * .447 * sec.exposure, G = W.G_open[idx], gOpen = HRS[idx].gust[2], rgb = [0, 0, 0], step = dt * 10;   // time-lapse x10 so streaks read as flow lines
+    const shift = (++tick % 3) === 0;
+    for (let i = 0; i < NP; i++) { let x = pp[3 * i], y = pp[3 * i + 1], z = pp[3 * i + 2]; const o = wind(sec, x, y, z), K = Math.hypot(o[0], o[1], o[2]);
+      x += o[0] * Uref * step; y += o[1] * Uref * step; z += o[2] * Uref * step; life[i] -= dt;
+      const gz = terrH(x, y); if (z < gz + .3) z = gz + .3;
+      if (life[i] < 0 || Math.abs(x) > 140 || Math.abs(y) > 140 || K < .03) { spawn(i, false); continue; }
+      pp[3 * i] = x; pp[3 * i + 1] = y; pp[3 * i + 2] = z;
+      const b = i * TL * 3; if (shift) trail.copyWithin(b + 3, b, b + TL * 3 - 3);
+      trail[b] = x; trail[b + 1] = y; trail[b + 2] = z;
+      ramp(gOpen * gustRatio(K, o[3], sec, z - gz), rgb); for (let c = 0; c < 3; c++) rgb[c] = Math.pow(.15 + .85 * rgb[c], 2.2); const fade = Math.min(1, life[i] / 1.5, (14 - life[i]) / 1.0);
+      for (let k = 0; k < TL - 1; k++) { const o1 = b + k * 3, o2 = o1 + 3, s6 = (i * (TL - 1) + k) * 6, f1 = (1 - k / (TL - 1)) * fade, f2 = (1 - (k + 1) / (TL - 1)) * fade;
+        segs[s6] = trail[o1]; segs[s6 + 1] = trail[o1 + 2]; segs[s6 + 2] = -trail[o1 + 1]; segs[s6 + 3] = trail[o2]; segs[s6 + 4] = trail[o2 + 2]; segs[s6 + 5] = -trail[o2 + 1];
+        scol[s6] = rgb[0] * (.25 + .75 * f1); scol[s6 + 1] = rgb[1] * (.25 + .75 * f1); scol[s6 + 2] = rgb[2] * (.25 + .75 * f1); scol[s6 + 3] = rgb[0] * (.25 + .75 * f2); scol[s6 + 4] = rgb[1] * (.25 + .75 * f2); scol[s6 + 5] = rgb[2] * (.25 + .75 * f2); } }
+    lg.attributes.position.needsUpdate = lg.attributes.color.needsUpdate = true; }
+
+  // rain: streaks falling with the wind drift; density follows the hourly rain rate
+  const NR = RM ? 0 : 5000, rpos = new Float32Array(NR * 6), rg = new THREE.BufferGeometry(); rg.setAttribute("position", new THREE.BufferAttribute(rpos, 3));
+  const rain = new THREE.LineSegments(rg, new THREE.LineBasicMaterial({color: 0xb4cde4, transparent: true, opacity: .32})); rain.frustumCulled = false; sc.add(rain);
+  const rp = new Float32Array(NR * 3); for (let i = 0; i < NR; i++) rp.set([(Math.random() * 2 - 1) * 150, Math.random() * 70, (Math.random() * 2 - 1) * 150], i * 3);
+  function rainStep(dt){ const rr = HRS[idx].rain[0], cnt = Math.round(clamp(rr * 40000, rr > .002 ? 400 : 0, NR)); rain.visible = layer.rain && view !== "storm" && cnt > 0; if (!rain.visible) return;
+    rg.setDrawRange(0, cnt * 2); const a = (HRS[idx].dir + 180) * Math.PI / 180, wv = HRS[idx].sust * .447 * .8, vx = Math.sin(a) * wv, vz = -Math.cos(a) * wv, vy = -9;
+    for (let i = 0; i < cnt; i++) { let x = rp[3 * i] + vx * dt, y = rp[3 * i + 1] + vy * dt, z = rp[3 * i + 2] + vz * dt;
+      if (y < terrH(x, -z) || Math.abs(x) > 150 || Math.abs(z) > 150) { x = (Math.random() * 2 - 1) * 150; z = (Math.random() * 2 - 1) * 150; y = 50 + Math.random() * 20; }
+      rp[3 * i] = x; rp[3 * i + 1] = y; rp[3 * i + 2] = z; rpos.set([x, y, z, x - vx * .05, y - vy * .05, z - vz * .05], i * 6); }
+    rg.attributes.position.needsUpdate = true; }
+
+  // house loads: ASCE 7 low-rise wall pressure coefficients by wind angle, velocity pressure from the CFD roof-height gust
+  const tags = [];
+  function tag(cls){ const el = document.createElement("div"); el.className = "tag3d " + (cls || ""); box3.appendChild(el); const t = {el, pos: new THREE.Vector3()}; tags.push(t); return t; }
+  const houseTag = tag(); houseTag.el.textContent = "Your house"; houseTag.pos.copy(P3(0, 0, HS.ridge_m + 3));
+  const wallTags = [0, 1, 2, 3].map(() => tag()), roofTag = tag("pull");
+  const CPW = [[0, .8], [45, .45], [70, -.3], [90, -.7], [135, -.5], [180, -.5]];
+  const cpAt = d => { d = Math.abs(d); for (let i = 1; i < CPW.length; i++) if (d <= CPW[i][0]) { const [a, ca] = CPW[i - 1], [b, cb] = CPW[i]; return ca + (cb - ca) * (d - a) / (b - a); } return -.5; };
+  const base0 = new THREE.Color(0xffffff);
+  function loads(){ const show = view === "house", hd = HS.heading;
+    const vRoof = HRS[idx].roof ? HRS[idx].roof[1] : HRS[idx].gust[2], q = .00256 * vRoof * vRoof;   // psf
+    // BoxGeometry faces 0:+x(local long axis, compass hd) 1:-x(hd+180) 4:+z(hd+90) 5:-z(hd-90)
+    [[0, hd, HS.L], [1, hd + 180, HS.L], [4, hd + 90, HS.W], [5, hd - 90, HS.W]].forEach(([m, fb, len], k) => {
+      const delta = ((fb - HRS[idx].dir) % 360 + 540) % 360 - 180, cp = cpAt(delta), p = q * cp;
+      const col = base0.clone(); if (show) col.lerp(new THREE.Color(p > 0 ? 0xff6a3a : 0x4a86ff), .35 + .55 * clamp(Math.abs(cp), 0, 1));
+      houseBox.material[m].color.copy(col);
+      const r = fb * Math.PI / 180, dist = (k < 2 ? HS.L : HS.W) / 2 + 1, t = wallTags[k];
+      t.pos.copy(P3(Math.sin(r) * dist, Math.cos(r) * dist, HS.eave_m * .6)); t.el.className = "tag3d " + (p > 0 ? "push" : "pull");
+      t.el.textContent = `${p > 0 ? "push +" : "suction −"}${Math.abs(p).toFixed(1)} psf`; t.el.hidden = !show; });
+    roofTag.pos.copy(P3(0, 0, HS.ridge_m + 1.2)); roofTag.el.textContent = `roof edges: up to −${(q * 2.0).toFixed(1)} psf uplift`; roofTag.el.hidden = !show; houseTag.el.hidden = show; }
+
+  // camera: frame the lot with the peak-hour wind coming from behind the viewer's left shoulder
+  const pd = (HRS[peakIdx].dir || 200) * Math.PI / 180;
+  const cams = {site: [P3(Math.sin(pd + .55) * 220, Math.cos(pd + .55) * 220, 140), P3(0, 0, 2)], house: [P3(Math.sin(pd + .7) * 52, Math.cos(pd + .7) * 52, 30), P3(0, 0, 4)]};
+  cam.position.copy(cams.site[0]); ctl.target.copy(cams.site[1]);
+  let flyT = 1, from = null, to = null;
+  function fly(v){ if (!cams[v]) return; from = [cam.position.clone(), ctl.target.clone()]; to = cams[v]; flyT = RM ? 1 : 0; if (RM) { cam.position.copy(to[0]); ctl.target.copy(to[1]); } }
+
+  // hover: LiDAR trees
+  const tip = $("#tip"), big = D.trees.filter(t => t.h >= 8), v3 = new THREE.Vector3(), HR = Math.sqrt(HS.L * HS.W / Math.PI);
+  cv.addEventListener("pointermove", e => { if (view === "storm") return; const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    let best = null, bd = 20;
+    for (const t of big) { v3.copy(P3(t.x, t.y, terrH(t.x, t.y) + t.h * .75)).project(cam); if (v3.z > 1) continue;
+      const d = Math.hypot((v3.x + 1) / 2 * r.width - mx, (1 - v3.y) / 2 * r.height - my); if (d < bd) { bd = d; best = t; } }
+    if (!best) { tip.hidden = true; return; }
+    const t = best, lgst = localGust(t.x, t.y, t.h + 1);
+    tip.innerHTML = `<b>Tree, ${ft(t.h)} ft tall</b><table>
+      <tr><td>Distance to house</td><td>${ft(Math.max(0, Math.hypot(t.x, t.y) - HR))} ft</td></tr>
+      <tr><td>Trunk (from LiDAR size)</td><td>${t.dbh_cm ? "≈ " + Math.round(t.dbh_cm / 2.54) + " in" : "n/a"}</td></tr>
+      <tr><td>Gust at its crown now</td><td>${Math.round(lgst)} mph</td></tr>
+      <tr><td>Storm peak (95%)</td><td>${t.gust95 ? Math.round(t.gust95) + " mph" : "n/a"}</td></tr>
+      <tr><td>Gust to ${t.mode === "uproot" ? "uproot" : "snap"} it</td><td>${t.crit_mph ? "≈ " + t.crit_mph + " mph" : "n/a"}</td></tr>
+      <tr><td>Chance it fails</td><td>${pct(t.p_fail)}</td></tr><tr><td>Chance it hits the house</td><td>${pct(t.p_hit)}</td></tr></table>`;
+    tip.hidden = false; const bx = box3.getBoundingClientRect();
+    tip.style.left = clamp(e.clientX - bx.left + 16, 8, bx.width - 268) + "px"; tip.style.top = clamp(e.clientY - bx.top + 16, 8, bx.height - 230) + "px"; });
+  cv.addEventListener("pointerleave", () => tip.hidden = true);
+
+  function resize(){ const r = cv.getBoundingClientRect(); if (!r.width) return; R.setSize(r.width, r.height, false); cam.aspect = r.width / r.height; cam.updateProjectionMatrix(); }
+  addEventListener("resize", resize); resize();
+  const refresh = () => { paintSheet(); paintVeg(); loads(); };
+  subs.push(refresh); viewSubs.push(v => { fly(v); refresh(); tip.hidden = true; });
+  let last = performance.now();
+  (function loop(t){ requestAnimationFrame(loop); const dt = Math.min(.05, (t - last) / 1000); last = t; if (view === "storm") return;
+    if (flyT < 1) { flyT = Math.min(1, flyT + dt / 1.2); const e = 1 - Math.pow(1 - flyT, 3); cam.position.lerpVectors(from[0], to[0], e); ctl.target.lerpVectors(from[1], to[1], e); }
+    flow(dt); rainStep(dt); ctl.update(); R.render(sc, cam);
+    const r = cv.getBoundingClientRect();
+    for (const g of tags) { if (g.el.hidden) continue; v3.copy(g.pos).project(cam); g.el.style.visibility = v3.z < 1 ? "visible" : "hidden";
+      g.el.style.transform = `translate(${((v3.x + 1) / 2 * r.width).toFixed(1)}px, ${((1 - v3.y) / 2 * r.height).toFixed(1)}px) translate(-50%, -110%)`; }
+    const az = Math.atan2(cam.position.x - ctl.target.x, cam.position.z - ctl.target.z); $("#needle").setAttribute("transform", `rotate(${(az * 180 / Math.PI + 180).toFixed(1)})`);
+  })(last);
+})();
+
+// ---------- storm map ----------
+(function stormMap(){
+  if (!D.map || !S.official) { $('[data-view="storm"]').hidden = true; return; }
+  const M = D.map, cv = $("#map"), ctx = cv.getContext("2d"), img = new Image();
+  const proj = (la, lo) => { const n = 256 * 2 ** M.z; return [(lo + 180) / 360 * n - M.x0, (1 - Math.asinh(Math.tan(la * Math.PI / 180)) / Math.PI) / 2 * n - M.y0]; };
+  let vw = {s: 1, ox: 0, oy: 0, dpr: 0};
+  function size(){ const r = cv.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1); if (!r.width) return;
+    cv.width = r.width * dpr; cv.height = r.height * dpr; const s = Math.max(cv.width / M.w, cv.height / M.h); vw = {s, ox: (cv.width - M.w * s) / 2, oy: (cv.height - M.h * s) / 2, dpr}; }
+  const P = (la, lo) => { const [x, y] = proj(la, lo); return [vw.ox + x * vw.s, vw.oy + y * vw.s]; };
+  const O = S.official;
+  function glyph(x, y, r, a, alpha){ ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.globalAlpha = alpha; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5 * vw.dpr; ctx.fillStyle = "#f0b44c";
+    for (let k = 0; k < 2; k++) { ctx.rotate(Math.PI); ctx.beginPath(); ctx.arc(r * .55, 0, r * .9, Math.PI, Math.PI * 1.75); ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(0, 0, r * .38, 0, 7); ctx.fill(); ctx.stroke(); ctx.restore(); }
+  function draw(t){
+    if (!img.complete || !vw.dpr || view !== "storm") return; const dpr = vw.dpr, home = P(D.meta.lat, D.meta.lon);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(img, vw.ox, vw.oy, M.w * vw.s, M.h * vw.s);
+    ctx.lineWidth = 1.3 * dpr; ctx.strokeStyle = "rgba(240,180,76,.17)";
+    for (const tr of S.tracks) { ctx.beginPath(); tr.lat.forEach((la, i) => { const [x, y] = P(la, tr.lon[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); }
+    ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.setLineDash([3 * dpr, 5 * dpr]); ctx.font = `${11 * dpr}px IBM Plex Mono, monospace`; ctx.fillStyle = "rgba(255,255,255,.65)";
+    for (const mi of [50, 100, 200]) { const [, y2] = P(D.meta.lat + mi * 1.609 / 110.54, D.meta.lon), r = home[1] - y2;
+      ctx.beginPath(); ctx.arc(home[0], home[1], r, 0, 7); ctx.stroke(); ctx.fillText(mi + " mi", home[0] + 4 * dpr, home[1] - r - 4 * dpr); }
+    ctx.setLineDash([8 * dpr, 6 * dpr]); ctx.lineWidth = 3 * dpr; ctx.strokeStyle = "#fff";
+    ctx.beginPath(); O.lat.forEach((la, i) => { const [x, y] = P(la, O.lon[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); ctx.setLineDash([]);
+    for (const p of S.track_pts) if (p.lat != null) { const [x, y] = P(p.lat, p.lon); ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(x, y, 4 * dpr, 0, 7); ctx.fill();
+      ctx.fillText(fmt(p.t, {weekday: "short", hour: "numeric"}) + " · " + Math.round(p.v * 1.151) + " mph", x + 8 * dpr, y + 4 * dpr); }
+    const k = Math.min(Math.round(idx / 2), S.tracks[0].lat.length - 1); ctx.fillStyle = "rgba(240,180,76,.6)";
+    for (const tr of S.tracks) { const [x, y] = P(tr.lat[k], tr.lon[k]); ctx.beginPath(); ctx.arc(x, y, 2.6 * dpr, 0, 7); ctx.fill(); }
+    ctx.fillStyle = "#5fd0c6"; ctx.strokeStyle = "#0a1017"; ctx.lineWidth = 2 * dpr; ctx.beginPath(); ctx.arc(home[0], home[1], 7 * dpr, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = `600 ${13 * dpr}px Hanken Grotesk, sans-serif`; ctx.fillText("You", home[0] + 11 * dpr, home[1] + 5 * dpr);
+    const v = O.vmax[idx], [sx, sy] = P(O.lat[idx], O.lon[idx]);
+    ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.lineWidth = 1.5 * dpr; ctx.beginPath(); ctx.moveTo(home[0], home[1]); ctx.lineTo(sx, sy); ctx.stroke();
+    glyph(sx, sy, (14 + v * .35) * dpr, RM ? 0 : -t / 900, v > 0 ? 1 : .35);
+    ctx.font = `500 ${12 * dpr}px IBM Plex Mono, monospace`; ctx.fillStyle = "#fff";
+    ctx.fillText(`${Math.round(O.dist_mi[idx])} mi · ${v > 0 ? Math.round(v * 1.151) + " mph max wind" : "dissipated"}`, (home[0] + sx) / 2 + 8 * dpr, (home[1] + sy) / 2);
+  }
+  img.onload = () => { size(); draw(0); }; img.src = M.img;
+  addEventListener("resize", () => { size(); draw(performance.now()); });
+  viewSubs.push(v => { if (v === "storm") { size(); draw(performance.now()); } }); subs.push(() => draw(performance.now()));
+  (function loop(t){ if (view === "storm" && !RM) draw(t); requestAnimationFrame(loop); })(0);
+})();
+
+// ---------- risks ----------
+(function risks(){
+  const el = $("#risks"), order = [...D.risks].sort((a, b) => b.p - a.p);
+  el.innerHTML = `<p class="lbl" style="margin:12px 0 2px">Chance in the next ${NT} hours · ${D.meta.members.toLocaleString()} simulated storms</p>` +
+    order.map((r, i) => `<div class="risk"><button aria-expanded="false" aria-controls="rk${i}"><span class="t">${r.title}</span><span class="p">${pct(r.p)}</span>
+      <span class="bar"><i style="width:${Math.max(1.5, Math.min(100, r.p * 100))}%;background:${riskCol(r.p)}"></i></span></button>
+      <div class="more" id="rk${i}" hidden><p>${r.plain}</p><table class="calc">${(r.calc || []).map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join("")}</table><p>${r.how}</p></div></div>`).join("") +
+    `<p class="note" style="margin-top:12px">Open a risk to see how it was calculated. Hover a tree in the scene for its own numbers.</p>`;
+  $$("#risks .risk > button").forEach((b, i) => b.onclick = () => { const open = b.getAttribute("aria-expanded") !== "true"; b.setAttribute("aria-expanded", open); b.nextElementSibling.hidden = !open;
+    const k = order[i].key; if (["tree_hit", "limb"].includes(k)) setLayer("risk", open); if (["cosmetic", "minor"].includes(k) && open) $('[data-view="house"]').click(); });
+})();
+
+// ---------- what to do ----------
+(function plan(){
+  const P = S.probs, pk = S.peak, ids = HRS.map((h, i) => i).filter(i => HRS[i].gust[2] >= pk.p50 * .85), HR = Math.sqrt(D.house.L * D.house.W / Math.PI);
+  const win = ids.length ? `${hourLbl(HRS[ids[0]].t)} to ${fmt(HRS[ids[ids.length - 1]].t, {hour: "numeric"})}` : hourLbl(pk.hour);
+  const upwind = compass(HRS[peakIdx].dir), near = D.trees.filter(t => t.h >= 8 && Math.hypot(t.x, t.y) < 25 + HR).length;
+  const before = [], during = [], after = [];
+  if (pk.p50 > 25) before.push("Bring in or tie down patio furniture, trash bins and anything that can blow around.");
+  if (P.power > .02) before.push(`Charge phones and battery packs. Chance of losing power: ${pct(P.power)}.`);
+  if (S.rain_total.p50 > .3 || P.ponding > .05) before.push("Clear gutters and downspouts, and point them away from the foundation.");
+  if (near) before.push(`Park cars away from the ${near} trees taller than 26 ft within 80 ft of the house.`);
+  if (P.tree_hit > .01) before.push(`Sleep in a room away from the tall trees on the ${upwind} side.`);
+  before.push("Turn on Wireless Emergency Alerts on your phone.");
+  during.push(`Strongest gusts: ${win}, from the ${upwind}.`);
+  if (HRS.some(h => (h.thunder || 0) > 20)) during.push("Rain bands can spin up brief tornadoes with little warning. Know your interior room on the lowest floor.");
+  during.push("Stay away from windows on the windward side during the strongest gusts.");
+  if (P.flash > .02) during.push("Never drive through water over a road. Six inches can float a car.");
+  after.push("Soaked ground keeps trees vulnerable for a day or two. Look up before walking under them.");
+  after.push("Treat every downed line as live and report it to your utility.");
+  if (P.power > .02) after.push("Run any generator outdoors, at least 20 ft from doors and windows.");
+  after.push("Walk around the house: check roof corners and the ridge for lifted shingles, and look for loose soffit or gutters.");
+  if (D.site.river) after.push(`Check ${D.site.river.name}. Creeks crest hours after the rain ends.`);
+  const sec = (t, L) => `<h3 class="sub">${t}</h3><ul>${L.map(x => `<li>${x}</li>`).join("")}</ul>`;
+  $("#plan").innerHTML = sec("Before the wind picks up", before) + sec(`During, ${win}`, during) + sec("After it passes", after) +
+    `<h3 class="sub">Official alerts</h3>` + (D.alerts.length ? D.alerts.map(a => `<div class="alert"><b>${a.event}</b><br>${a.headline}</div>`).join("") :
+    `<p class="note">No National Weather Service alerts for this point right now.</p>`) +
+    `<p class="note">This is a model, not an official forecast. Follow NWS ${D.meta.office} and local officials.</p>`;
+})();
+
+// ---------- how it works ----------
+(function method(){
+  const s = D.site, H = D.house, L = s.lidar, k = D.knobs, sec0 = W && W.sectors[0];
+  const steps = [
+    ["Finds your roof", `Esri rooftop address point, then the building outline (${H.src}): ${ft(H.L)} × ${ft(H.W)} ft, ${H.stories} storeys, eaves ${ft(H.eave_m)} ft, ridge ${ft(H.ridge_m)} ft.`],
+    ["Rebuilds the ground", `${s.dem} bare-earth elevation, ${D.scene.terrain.n * 2} m square around the house. Lot elevation ${s.elev_ft ? Math.round(s.elev_ft) + " ft" : "n/a"}; relief within a mile ${s.terrain_relief ? ft(s.terrain_relief) + " ft" : "n/a"}, checked for hill speed-up with the ASCE 7 topographic factor.`],
+    ["Measures every tree", L ? `${L.points.toLocaleString()} airborne LiDAR returns from USGS survey ${L.survey.replace(/_/g, " ")}. Treetops are found with a height-dependent search window (Popescu & Wynne 2004). Trees cut down since ${L.year} are removed by checking current imagery. ${D.trees.filter(t => t.h >= 8).length} trees over 26 ft are modelled one by one.` : "No LiDAR survey covers this point, so tree heights come from imagery and a typical height."],
+    ["Simulates the wind around your lot", sec0 ? `3D lattice-Boltzmann large-eddy simulation (D3Q19, BGK collision, Smagorinsky subgrid model), the method behind fast urban-wind tools. Grid ${sec0.lattice.join(" × ")} cells of ${sec0.dx} m, ${W.steps.toLocaleString()} time steps for each forecast wind direction (${W.sectors.map(x => compass(x.dir)).join(", ")}). Buildings and ground are solid walls; tree crowns are porous drag (leaf area index ${k.tree_LAI}). The incoming wind has a log-law profile and synthetic turbulence (Smirnov et al. 2001) for upwind roughness z₀ ≈ ${W.sectors.map(x => x.z0.toFixed(2)).join(" / ")} m, measured from building and tree density (Macdonald et al. 1998).` : "The wind simulation was not run for this report."],
+    ["Turns flow into gusts", `Local 3-second gust = mean wind + 3 × turbulence (Hunt et al. 1976; Lawson's gust-equivalent mean), both taken from the simulation. The result is expressed relative to the same formula over open terrain, so the NWS gust forecast sets the absolute level and the simulation only redistributes it around your lot. One run per direction scales to any forecast speed, because flow around sharp-edged buildings does not depend on Reynolds number at storm speeds.`],
+    ["Runs the storm 1,000 times", `NHC-style Monte Carlo (DeMaria et al. 2009): track and intensity errors drawn from NHC's 5-year verification with hour-to-hour correlation, a Holland wind profile and Kaplan–DeMaria inland decay, anchored to the NWS ${D.meta.office} hourly gust forecast.`],
+    ["Scores each hazard", `Trees: wind bending moment at each tree's crown vs. trunk strength (green-wood MOR ${k.tree_MOR / 1e6} MPa) and root anchorage, scaled so a typical mature hardwood fails near ${k.tree_ref[2]} mph (post-hurricane tree surveys), weaker in wet soil. House: Hazus wood-frame fragility curves with the ASCE 7 topographic factor. Wall pressures: ASCE 7 low-rise coefficients. Power: logistic outage curve. Water: SCS curve number and NWS river forecasts.`],
+  ];
+  $("#method").innerHTML = `<div style="margin-top:6px">${steps.map(([t, d], i) => `<div class="step"><span class="n">${String(i + 1).padStart(2, "0")}</span><div><b>${t}</b>${d}</div></div>`).join("")}</div>
+    <h3 class="sub">Known limits</h3><ul class="note"><li>The LiDAR is from ${L ? L.year : "an older survey"}. Trees planted since then are modelled as small 6 m crowns.</li>
+    <li>${sec0 ? sec0.dx : 2.5} m cells resolve the house as a block. On the standard cube-in-boundary-layer test, the wake reattaches about 2.5 heights downstream (wind tunnels: 1.4–1.6), so shelter right behind buildings is slightly overstated.</li>
+    <li>Species, decay and root damage are unknown. A hollow or leaning tree can fail far below its modelled gust.</li></ul>
+    <h3 class="sub">Data sources</h3><ul class="note">${[["NHC / WPC advisory", D.meta.storm?.url], ["NWS gridded forecast (api.weather.gov)", "https://www.weather.gov/documentation/services-web-api"],
+      ["USGS 3DEP LiDAR point clouds (AWS open data)", "https://registry.opendata.aws/usgs-lidar/"], ["USGS 3D Elevation Program", "https://www.usgs.gov/3d-elevation-program"],
+      ["Esri World Imagery and World Geocoder", "https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9"], ["Building footprints: OpenStreetMap, Microsoft, FEMA/ORNL", "https://github.com/microsoft/GlobalMLBuildingFootprints"],
+      ["FEMA National Flood Hazard Layer", "https://hazards.fema.gov/"], ["NRCS Soil Data Access", "https://sdmdataaccess.sc.egov.usda.gov/"], ["NOAA National Water Prediction Service", "https://water.noaa.gov/"],
+      ["DeMaria et al. 2009, wind speed probabilities", "https://www.nhc.noaa.gov/pdf/2009waf_wsp.pdf"], ["FEMA Hazus hurricane model", "https://www.fema.gov/flood-maps/products-tools/hazus"]]
+      .filter(x => x[1]).map(([t, u]) => `<li><a href="${u}" target="_blank" rel="noopener">${t}</a></li>`).join("")}</ul>
+    <p class="note">Generated ${D.meta.generated} · NWS ${D.meta.office} · ${D.meta.lat.toFixed(5)}, ${D.meta.lon.toFixed(5)}</p>`;
+})();
+
+// ---------- timeline ----------
+(function timeline(){
+  const cv = $("#spark"), ctx = cv.getContext("2d");
+  const ro = () => { const h = HRS[idx];
+    $("#readout").innerHTML = `<span class="when">${fmt(h.t, {weekday: "short", hour: "numeric"})}</span>
+      <span>gust <b>${Math.round(h.gust[2])}</b> mph</span>${h.roof ? `<span>at roof <b>${Math.round(h.roof[1])}</b></span><span>in yard <b>${Math.round(h.yard[1])}</b></span>` : ""}
+      <span>from <b>${compass(h.dir)}</b></span><span>rain <b>${h.rain[0].toFixed(2)}</b> in/hr</span>`; };
+  let w = 0, hgt = 0, dpr = 1;
+  const ymax = Math.max(40, ...HRS.map(h => h.gust[4])) * 1.1, rmax = Math.max(.05, ...HRS.map(h => h.rain[1]));
+  const X = i => 8 * dpr + i / (NT - 1) * (w - 16 * dpr), Y = v => (hgt - 16 * dpr) * (1 - v / ymax) + 2 * dpr;
+  function draw(){ const r = cv.getBoundingClientRect(); if (!r.width) return; dpr = Math.min(2, devicePixelRatio || 1); w = cv.width = r.width * dpr; hgt = cv.height = r.height * dpr;
+    ctx.clearRect(0, 0, w, hgt); const ink = css("--ink"), mut = css("--muted"), acc = css("--accent"), line = css("--line");
+    ctx.font = `${10 * dpr}px IBM Plex Mono, monospace`; ctx.strokeStyle = line; ctx.lineWidth = dpr; ctx.fillStyle = mut;
+    for (const v of [20, 40, 60]) if (v < ymax) { ctx.beginPath(); ctx.moveTo(X(0), Y(v)); ctx.lineTo(X(NT - 1), Y(v)); ctx.stroke(); ctx.fillText(v, X(0) + 2 * dpr, Y(v) - 3 * dpr); }
+    HRS.forEach((h, i) => { const bh = h.rain[0] / rmax * 16 * dpr; ctx.fillStyle = "rgba(110,160,220,.55)"; ctx.fillRect(X(i) - 2 * dpr, hgt - 14 * dpr - bh, 4 * dpr, bh);
+      if (i % 3 === 0) { ctx.fillStyle = mut; ctx.fillText(fmt(h.t, {hour: "numeric"}).replace(" ", "").toLowerCase(), X(i) - 8 * dpr, hgt - 2 * dpr); } });
+    ctx.globalAlpha = .22; ctx.fillStyle = acc; ctx.beginPath(); HRS.forEach((h, i) => i ? ctx.lineTo(X(i), Y(h.gust[4])) : ctx.moveTo(X(i), Y(h.gust[4])));
+    for (let i = NT - 1; i >= 0; i--) ctx.lineTo(X(i), Y(HRS[i].gust[0])); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = ink; ctx.lineWidth = 1.6 * dpr; ctx.beginPath(); HRS.forEach((h, i) => i ? ctx.lineTo(X(i), Y(h.gust[2])) : ctx.moveTo(X(i), Y(h.gust[2]))); ctx.stroke();
+    if (HRS[0].roof) { ctx.strokeStyle = acc; ctx.setLineDash([4 * dpr, 3 * dpr]); ctx.beginPath(); HRS.forEach((h, i) => i ? ctx.lineTo(X(i), Y(h.roof[1])) : ctx.moveTo(X(i), Y(h.roof[1]))); ctx.stroke(); ctx.setLineDash([]); }
+    const cx = X(idx); ctx.strokeStyle = ink; ctx.lineWidth = dpr; ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, hgt - 14 * dpr); ctx.stroke();
+    ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(cx, Y(HRS[idx].gust[2]), 3.5 * dpr, 0, 7); ctx.fill();
+    ctx.textAlign = "right"; ctx.fillStyle = mut; ctx.fillText(`gust mph · band 5–95%${HRS[0].roof ? " · dashed: at your roof" : ""}`, w - 4 * dpr, 10 * dpr); ctx.textAlign = "left"; }
+  const pick = e => { const r = cv.getBoundingClientRect(); setIdx((e.clientX - r.left - 8) / (r.width - 16) * (NT - 1)); };
+  let drag = false; cv.addEventListener("pointerdown", e => { drag = true; cv.setPointerCapture(e.pointerId); pick(e); });
+  cv.addEventListener("pointermove", e => drag && pick(e)); cv.addEventListener("pointerup", () => drag = false);
+  cv.tabIndex = 0; cv.addEventListener("keydown", e => { if (e.key === "ArrowRight") setIdx(idx + 1); if (e.key === "ArrowLeft") setIdx(idx - 1); });
+  subs.push(() => { ro(); draw(); }); addEventListener("resize", draw);
+  let timer = null; const icon = $("#playIcon");
+  $("#play").onclick = () => { if (timer) { clearInterval(timer); timer = null; icon.setAttribute("d", "M4 2l10 6-10 6z"); $("#play").setAttribute("aria-label", "Play timeline"); return; }
+    if (idx >= NT - 1) setIdx(0); icon.setAttribute("d", "M3 2h4v12H3zM9 2h4v12H9z"); $("#play").setAttribute("aria-label", "Pause timeline");
+    timer = setInterval(() => { if (idx >= NT - 1) { $("#play").click(); return; } setIdx(idx + 1); }, 1100); };
+})();
+setIdx(idx);
+</script>
