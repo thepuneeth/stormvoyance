@@ -42,6 +42,10 @@ def check(D, want, min_nb):
     P = S["probs"]
     ok(all(v is None or (math.isfinite(v) and 0 <= v <= 1) for v in P.values()), "probability outside [0, 1]")
     ok(P["cosmetic"] >= P["minor"] >= P["moderate"] >= P["severe"], "damage states out of order")
+    ok(S.get("dir_cover", 0) >= 0.6, f"simulated directions hold only {S.get('dir_cover', 0):.0%} of the damaging wind")
+    T = S.get("tornado")
+    ok(T is None or all(0 <= T["probs"][x] <= 1 for x in T["probs"]) and T["probs"]["ef0"] >= T["probs"]["ef1"] >= T["probs"]["ef2"],
+       "tornado probabilities out of order")
     return errs
 
 
@@ -69,6 +73,10 @@ def main(keys):
             H = D["house"]
             print(f"      {H.get('cls_label')}, {H['area']:,.0f} m², roof {H['eave_m']}-{H['ridge_m']} m, "
                   f"{len(D['buildings'])} neighbours, grid {H.get('cfd_grid')}, approach {H.get('approach')}")
+            Sm = D["sim"]; T = Sm.get("tornado")
+            dirs = [x["dir"] for x in (D.get("wind") or {}).get("sectors", [])]
+            spc = ", ".join("day %d %.0f%%" % (d["day"], 100 * d["p25"]) for d in T["days"]) if T else "n/a"
+            print(f"      wind dirs {dirs} hold {Sm.get('dir_cover', 0):.0%} of damaging wind; SPC tornado: {spc}")
         for e in errs:
             print("      ✗", e)
         for l in log:

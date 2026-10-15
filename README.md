@@ -11,6 +11,13 @@ NHC/NWS forecasts.
   commercial, metal/industrial, engineered mid/high-rise).
 - **Storm ensemble**: NHC-style 1000-member Monte Carlo (track/intensity error, Holland vortex, Kaplan-DeMaria decay),
   anchored to the NWS point forecast.
+- **Per-run wind direction**: every ensemble run has its own wind direction (forecast direction plus its error, turned
+  further when that run's hurricane passes on a different side of the house). CFD is run for each direction holding a
+  real share of the damaging wind (up to 6, chosen to cover 90 %), and each run reads the flow for its own direction.
+- **Tornadoes** (`tornado.py`): SPC's tornado outlook (chance within 25 mi, conditional-intensity level) drives path
+  scenarios drawn from US climatology (rating, length, width, forward speed). Each passes the house as a translating
+  modified Rankine vortex; the share of the 25-mile circle where the lot feels each wind level is integrated exactly, then
+  scored with the building's damage curves and combined with the straight-line damage.
 - **Wind CFD**: D3Q19 lattice-Boltzmann LES (regularized BGK + Smagorinsky) with a log-law ground wall model and
   synthetic inflow turbulence. Runs as a Metal kernel on Apple GPUs via PyTorch, falls back to numpy.
 - **Damage**: Hazus-style lognormal fragilities per construction class, driven by the load ratio against the ASCE 7
@@ -24,9 +31,14 @@ NHC/NWS forecasts.
 | Cube windward Cp | 0.85-0.89 | 0.7-0.8 |
 | 5-site matrix (house, landmark, tower, warehouse, low-rise) | 4/5 pass on last full run | `validate_sites.py` |
 
+Tornado layer check (`python3 tornado.py`): wood-frame damage medians land at 64 / 88 / 111 / 134 mph against the EF-scale
+expected winds for one- and two-family homes (DI 2: 79 / 97 / 122 / 132 mph), within 20 %, and the swath geometry matches
+the rated width.
+
 Known limits: side/roof suction ~30-50% weaker than wind-tunnel data at the default resolution; suburban approach gust
 ~20-30% conservative versus ASCE 7 exposure B; non-house damage medians are engineering estimates; design wind speed
-defaults to 110 mph (`--design-mph` to override).
+defaults to 110 mph (`--design-mph` to override). Tornado paths are straight with one
+climatological heading and size distribution; tornado counts given one is nearby are a calibration knob.
 
 ## Run
 

@@ -27,14 +27,15 @@ const STAGES: { re: RegExp; title: string; short: string; icon: IconName; secs: 
     "USGS LiDAR maps the ground at two or more laser points per square metre, accurate to about 10 cm in height.",
     "Every tree near your house gets a measured height and crown width, not a guess.",
     "Satellites check whether the trees are in leaf. Bare branches catch much less wind."] },
-  { re: /^wind simulation/, title: "Simulating the wind around your house", short: "Wind", icon: "wind", secs: 300, facts: [
+  { re: /^wind simulation/, title: "Simulating the wind around your house", short: "Wind", icon: "wind", secs: 480, facts: [
     "This is the big one: a lattice-Boltzmann CFD solver, the same family used for city wind studies.",
     "Wind piles up against the wall facing it and pulls at the roof and the far side.",
     "Roof edges are where shingles lift first. Suction there can be more than twice the roof average.",
     "A second, finer 1-metre grid zooms in on your house for wall-by-wall pressures.",
     "First runs at a new address take a few minutes here. Later runs reuse the result instantly."] },
   { re: /^Monte Carlo/, title: "Playing out 1,000 versions of the storm", short: "Storms", icon: "thunder", secs: 15, facts: [
-    "Each simulated storm gets its own track, timing and gust surprises.",
+    "Each simulated storm gets its own track, timing, wind direction and gust surprises.",
+    "Tornadoes are checked separately: thousands of possible paths from the SPC outlook and US history.",
     "A 30% chance means about 300 of the 1,000 simulated storms caused it."] },
   { re: /^wrote/, title: "Building your 3D report", short: "3D", icon: "layers", secs: 5, facts: [
     "Packing your house, trees and wind field into an interactive 3D model."] },
@@ -59,6 +60,7 @@ function findings(log: string[]): Tile[] {
     if ((m = l.match(/gust now (\d+) mph/))) out.set("gust", { k: "gust", label: "Gust right now", v: m[1], unit: "mph" });
     if ((m = l.match(/CFD, (\d+) wind directions?\)/))) out.set("dirs", { k: "dirs", label: "Wind directions", v: m[1], sub: "lattice-Boltzmann CFD" });
     if ((m = l.match(/^Monte Carlo \((\d+) members\)/))) out.set("mc", { k: "mc", label: "Storms simulated", v: (+m[1]).toLocaleString("en-US") });
+    if ((m = l.match(/^SPC tornado outlook: day \d+ (\d+)%/))) out.set("torn", { k: "torn", label: "Tornado nearby", v: String(Math.max(...[...l.matchAll(/(\d+)% within/g)].map(x => +x[1]))), unit: "%", sub: "SPC, within 25 mi" });
   }
   return [...out.values()];
 }

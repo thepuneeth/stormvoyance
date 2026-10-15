@@ -15,7 +15,7 @@ export function createPlan(M: Model, cv: HTMLCanvasElement, onHover: (t: Tree | 
   let st: St = { idx: M.peakIdx, layer: { flow: true, slice: true, risk: false, rain: false, lidar: false }, sliceH: 2, active: false };
   let dpr = 1, cw = 0, ch = 0, zoom = 1, panX = 0, panY = 0, raf = 0, last = performance.now();
   const EXT = Math.min(140, HALF);   // CFD domain half-width
-  const scale = () => Math.min(cw, ch) / (2 * EXT) * zoom;
+  const scale = () => Math.max(cw, ch) / (2 * EXT) * zoom;   // the simulated area (and imagery under it) covers the whole canvas
   const toS = (x: number, y: number): [number, number] => [cw / 2 + (x - panX) * scale(), ch / 2 - (y - panY) * scale()];
   const toW = (sx: number, sy: number): [number, number] => [panX + (sx - cw / 2) / scale(), panY - (sy - ch / 2) / scale()];
 
@@ -88,14 +88,17 @@ export function createPlan(M: Model, cv: HTMLCanvasElement, onHover: (t: Tree | 
     }
     ctx.lineWidth = dpr; ctx.strokeStyle = "rgba(255,255,255,.38)"; for (const b of D.buildings) { rect(b); ctx.stroke(); }
     if (W && st.layer.flow) ctx.drawImage(trail, 0, 0);
-    rect({ cx: 0, cy: 0, L: HS.L, W: HS.W, heading: HS.heading }); ctx.fillStyle = "rgba(111,227,211,.1)"; ctx.fill(); ctx.lineWidth = 1.5 * dpr; ctx.strokeStyle = accent; ctx.stroke();
+    if (HS.ring?.length > 2) { ctx.beginPath(); (HS.ring as [number, number][]).forEach(([x, y], k) => { const [sx, sy] = toS(x, y); k ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); }); ctx.closePath(); }
+    else rect({ cx: 0, cy: 0, L: HS.L, W: HS.W, heading: HS.heading });
+    ctx.fillStyle = "rgba(111,227,211,.1)"; ctx.fill(); ctx.lineWidth = 1.5 * dpr; ctx.strokeStyle = accent; ctx.stroke();
     // labels: you, local gust at the house, wind direction, scale bar
-    const h = HRS[st.idx], [hx, hy] = toS(0, 0), gHouse = M.localGust(0, -HS.W / 2 - 3, 2, st.idx);
+    // same number as the hero line ("at your roof"); older bundles without it sample beside the south wall
+    const h = HRS[st.idx], [hx, hy] = toS(0, 0), gHouse = h.roof?.[1] ?? M.localGust(0, -HS.W / 2 - 3, 2, st.idx);
     ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(hx, hy, 3 * dpr, 0, 7); ctx.fill();
-    pill(`${bldName(HS)} · ${Math.round(gHouse)} mph gusts`, hx, hy - HS.W / 2 * s - 14 * dpr, mono(11), ink);
+    pill(`${bldName(HS)} · ${Math.round(gHouse)} mph at the roof`, hx, hy - HS.W / 2 * s - 14 * dpr, mono(11), ink);
     // compass + scale bar take the 3D view's compass slot, right of the gust legend; on phones (no legend row) the right edge
     const R = 28 * dpr, r = cv.getBoundingClientRect(), lo = cv.parentElement?.querySelector(".lower")?.getBoundingClientRect();
-    const row = !!lo?.width, ax = row ? (lo!.right - r.left + 10) * dpr + R : cw - 16 * dpr - R, ay = row ? (lo!.bottom - r.top) * dpr - R : ch * .4;
+    const row = !!lo?.width, ax = row ? (lo!.right - r.left + 10) * dpr + R : cw - 16 * dpr - R, ay = row ? (lo!.bottom - r.top) * dpr - R : ch * .56;
     const a = (h.dir + 180) * Math.PI / 180;   // arrow points where the wind blows to
     ctx.beginPath(); ctx.arc(ax, ay, R, 0, 7); ctx.fillStyle = "rgba(10,13,17,.72)"; ctx.fill(); ctx.lineWidth = dpr; ctx.strokeStyle = "rgba(255,255,255,.1)"; ctx.stroke();
     for (let k = 0; k < 16; k++) {   // 16 compass dots, north brightest

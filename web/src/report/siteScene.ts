@@ -413,7 +413,12 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   let flight: { t0: THREE.Vector3; t1: THREE.Vector3; s0: THREE.Spherical; s1: THREE.Spherical; k: number; dur: number } | null = null, lastPose: Pose | null = null;
   const tmp = new THREE.Vector3(), sph = new THREE.Spherical();
   // a portrait screen sees a narrow slice across: pull the camera back along its line of sight so the subject still fits
-  const fit = (p: Pose): Pose => { const k = clamp((1.3 / cam.aspect) ** .6, 1, 2.1); return k > 1 ? [tmp.subVectors(p[0], p[1]).multiplyScalar(k).add(p[1]).clone(), p[1]] : p; };
+  // and slide the view forward a little, so the subject sits in the open lower half instead of under the headline
+  const fit = (p: Pose): Pose => {
+    const k = clamp((1.3 / cam.aspect) ** .6, 1, 2.1); if (k <= 1) return p;
+    const d = tmp.subVectors(p[0], p[1]).multiplyScalar(k), fwd = new THREE.Vector3(-d.x, 0, -d.z).normalize().multiplyScalar(d.length() * .3 * (k - 1));
+    return [d.add(p[1]).add(fwd).clone(), p[1].clone().add(fwd)];
+  };
   // eased flight: the target glides, the camera swings around it in spherical coordinates (distance eased in log space)
   function flyTo(pose: Pose, dur: number) {
     lastPose = pose; dirty = true; const p = fit(pose);
@@ -529,10 +534,12 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
     trees?.update(sec, h.gust[2] * .8);
     sky.mesh.position.copy(cam.position);
     if (g3d) R.render(sc, cam); else composer.render(dt);
-    for (const g of tags) {
-      if (g.el.hidden) continue; v3.copy(g.pos).project(cam); g.el.style.visibility = v3.z < 1 ? "visible" : "hidden";
-      g.el.style.transform = `translate(${((v3.x + 1) / 2 * VW).toFixed(1)}px, ${((1 - v3.y) / 2 * VH).toFixed(1)}px) translate(-50%, -110%)`;
-    }
+    const half = tags.map(g => g.el.hidden ? 0 : g.el.offsetWidth / 2);   // read layout once, before any writes
+    tags.forEach((g, i) => {
+      if (g.el.hidden) return; v3.copy(g.pos).project(cam); g.el.style.visibility = v3.z < 1 ? "visible" : "hidden";
+      const x = clamp((v3.x + 1) / 2 * VW, half[i] + 8, VW - half[i] - 8);   // a label near the edge stays whole on screen
+      g.el.style.transform = `translate(${x.toFixed(1)}px, ${((1 - v3.y) / 2 * VH).toFixed(1)}px) translate(-50%, -110%)`;
+    });
     cam.getWorldDirection(fwd); const az = Math.atan2(-fwd.x, -fwd.z);
     o.needle.setAttribute("transform", `rotate(${(az * 180 / Math.PI + 180).toFixed(1)})`);
     if (anim) adapt(t, gap);

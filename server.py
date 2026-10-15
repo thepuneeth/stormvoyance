@@ -151,16 +151,17 @@ def _bundle(f: Path) -> str:
     return line[len("const D = "):].rstrip(";")
 
 
-SUMMARY_V = 2   # bump when summary() gains fields; older summary.json files are rebuilt from their report
+SUMMARY_V = 4   # bump when summary() gains fields; older summary.json files are rebuilt from their report
 
 
 def summary(d: Path) -> dict:
     """What the start page's run cards need from one report: headline risk, peak gust, the peak hour's weather, a 24 h gust line."""
     D = json.loads(_bundle(d / "report.html"))
     S, top = D["sim"], max(D["risks"], key=lambda r: r["p"] or 0)
-    at = next((h for h in S["hours"] if h["t"] == S["peak"]["hour"]), S["hours"][0])
-    return dict(v=SUMMARY_V, id=d.name, address=D["meta"]["address"], generated=D["meta"]["generated"], top=top["title"], p=top["p"] or 0,
-                peak_p50=round(S["peak"]["p50"], 1), peak_p95=round(S["peak"]["p95"], 1), peak_hour=S["peak"]["hour"], tz=D["meta"]["tz"],
+    # the report's own peak: the highest hourly median gust (and that hour's 95th percentile), so card and report agree
+    at = max(S["hours"], key=lambda h: h["gust"][2])
+    return dict(v=SUMMARY_V, engine=D["meta"].get("engine", 0), id=d.name, address=D["meta"]["address"], generated=D["meta"]["generated"], top=top["title"], p=top["p"] or 0,
+                peak_p50=round(at["gust"][2], 1), peak_p95=round(at["gust"][4], 1), peak_hour=at["t"], tz=D["meta"]["tz"],
                 cond_hour={k: at.get(k) for k in ("gust", "rain", "pop", "thunder")},
                 spark=[round(h["gust"][2], 1) for h in S["hours"][:24]])
 
@@ -181,6 +182,8 @@ def recent(n: int = 6):
             except (StopIteration, ValueError, KeyError, IndexError, TypeError):
                 continue
             sf.write_text(json.dumps(s))
+        if s.get("engine") != eng.ENGINE_VERSION:   # older engines' reports stay reachable by link, not listed
+            continue
         if s["address"] not in seen:
             seen.add(s["address"]); out.append(s)
         if len(out) >= n:

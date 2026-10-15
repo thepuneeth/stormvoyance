@@ -69,6 +69,7 @@
 
 .pk-c-top { display: flex; align-items: center; gap: 7px; min-height: 18px; font-size: 13px; font-weight: 500; }
 .pk-c-top svg { flex: none; color: var(--muted); }
+.pk-c-top > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* the run time never gets pushed past the edge */
 .pk-c-when { margin-left: auto; font: 11px/1 var(--f-data); color: var(--pk-dim); white-space: nowrap; }
 .pk-c-gust { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 6px; }
 .pk-c-gust .num { font-size: 52px; }
@@ -115,6 +116,8 @@
   .pk-go-t, .pk-kbd { display: none; }
   .pk .pk-card { width: 196px; padding: 14px 14px 12px; }
   .pk-c-gust .num { font-size: 46px; }
+  .pk-c-top { gap: 5px; font-size: 12px; }
+  .pk-c-when { font-size: 10px; }
   /* the copy spans the full width here, so the left-hand shade can't protect it: dim the whole field instead */
   .pk-bg::after { background: linear-gradient(0deg, color-mix(in srgb, var(--night) 92%, transparent) 0%, transparent 38%), color-mix(in srgb, var(--night) 55%, transparent); }
 }

@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # sibling modules under `python -I` (cwd stays off the path)
 import calib
+import tornado
 from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # cfd.py next to this file (also under python -I)
 from scipy import ndimage as nd
@@ -33,6 +34,7 @@ HERE = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------- calibration knobs
 # Every number here is a published-ish central value; tune per region / new science.
+ENGINE_VERSION = 4   # bump when reports change meaning; the start page lists only runs from the current engine
 K = dict(
     members=1000,
     # NHC official Atlantic 5-yr mean track error (n mi) by lead hour, ~2020-2024 verification
@@ -48,6 +50,8 @@ K = dict(
     nws_gust_sigma_hourly=0.08,
     convective_gust_mult=1.35,         # median thunderstorm-outflow gust / grid gust (calibration knob; outflows run 1.2-1.6x)
     blend_C_mph=10.0,                  # regularizer for vortex/NWS ratio when storm is far
+    dir_sigma=15.0, dir_sigma_hourly=8.0,  # NWS wind-direction forecast error (deg), event scale and hourly, at gusty winds
+    inflow_deg=20.0,                   # surface inflow angle of a tropical cyclone's wind toward its centre
     rain_sigma=0.45,                   # lognormal spread of QPF error (WPC QPF verification order)
     kd_Vb=26.7, kd_R=0.9, kd_alpha=0.095,  # Kaplan & DeMaria (1995) inland decay
     # fragility medians (3-s gust, mph) + lognormal beta. Hazus-like, wood-frame 1-2 story, shingle roof
@@ -542,7 +546,7 @@ def classify(b):
         lv = float(b["tags"].get("building:levels", ""))
     except ValueError:
         lv = None
-    stories = int(lv) if lv else max(1, round((h - 0.5) / 3.4)) if h else None
+    stories = int(lv) if lv else 2 if str(b.get("h_src", "")).startswith("assumed") else max(1, round((h - 0.5) / 3.4)) if h else None
     if (stories or 0) >= 5 or h > 17:
         cls = "MRB"
     elif t in _IND or (t not in _RES1 | _RESM and A > 2500 and b.get("flat")):
@@ -562,7 +566,8 @@ def measure_buildings(blds, P, ground, R):
     building and class 1 unclassified -- many surveys classify buildings sparsely or not at all) gridded to 1 m, minus
     the 3DEP ground, inside each outline. A building counts as measured when returns cover 40 % of its outline (newer
     buildings show bare ground). Sets h (roof top, 95th pct: robust to overhanging crowns), eave (low roof edge, 10th
-    pct) and flat (top-to-edge spread < 1.5 m); returns the 1 m height-above-ground grid (NaN = no return)."""
+    pct) and flat (top-to-edge spread < 1.5 m). A building whose outline is mostly ground in the survey (built later) stays
+    unmeasured. Returns the 1 m height-above-ground grid (NaN = no return)."""
     n = 2 * R; x, y, z, c = P.T
     m = np.isin(c, (1, 6)) & (np.abs(x) < R) & (np.abs(y) < R)
     i = np.clip((R - y[m]).astype(int), 0, n - 1); j = np.clip((x[m] + R).astype(int), 0, n - 1)
@@ -572,8 +577,16 @@ def measure_buildings(blds, P, ground, R):
         cells = _cells(b, R)
         if cells is None:
             continue
-        v = ndsm[cells]; v = v[np.isfinite(v) & (v > 1.5) & (v < 600)]
-        if len(v) >= max(8, .4 * cells[0].size):
+        # 1 m in from the outline: footprints and LiDAR disagree by a metre or so, and edge cells catch ground, shrubs
+        # and gutters that would drag the eave down (small buildings keep their full outline)
+        inner = np.zeros((n, n), bool); inner[cells] = True; inner = nd.binary_erosion(inner)
+        core = np.nonzero(inner) if inner.sum() >= max(8, .3 * cells[0].size) else cells
+        v = ndsm[core]; v = v[np.isfinite(v) & (v < 600)]
+        # a survey flown before the building stood (or mid-construction) shows ground and scaffolding, not a roof
+        if len(v) < max(8, .4 * core[0].size) or (v > 2.5).mean() < .6:
+            continue
+        v = v[v > 1.5]
+        if len(v) >= max(8, .4 * core[0].size):
             p10, p90, p95 = np.percentile(v, [10, 90, 95])
             b.update(h=float(p95), eave=float(p10), flat=bool(p90 - p10 < 1.5), h_src="LiDAR")
     return ndsm
@@ -1163,6 +1176,17 @@ def ar1(rng, shape, rho):
         out[..., t] = rho * out[..., t - 1] + math.sqrt(1 - rho ** 2) * z[..., t]
     return out
 
+def pick_sectors(dir_m, gust, cap, share=0.05, cover=0.9):
+    """CFD directions (22.5 deg bins) carrying the damaging wind of the whole ensemble: bins in order of gust^2 weight
+    (wind load) over the hours within half of the peak median gust, until `cover` of it is held or a bin adds < `share`."""
+    med = np.median(gust, 0)
+    wt = gust ** 2 * (med >= .5 * med.max())[None, :]
+    b = np.round(dir_m / 22.5).astype(int) % 16
+    tot = np.bincount(b.ravel(), wt.ravel(), 16)
+    order = np.argsort(-tot); frac = tot[order] / max(tot.sum(), 1e-9)
+    n = max(1, min(cap, int(np.searchsorted(np.cumsum(frac), cover) + 1), int((frac >= share).sum())))
+    return [float(i * 22.5) for i in order[:n]]
+
 def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
     """NHC-style Monte Carlo. Returns hourly percentiles + per-member impact probabilities."""
     N, T = K["members"], len(times)
@@ -1185,6 +1209,11 @@ def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
         storm = rng.random((N, T)) < p_th[None, :]
         gust = np.where(storm, gust * np.exp(rng.normal(math.log(K["convective_gust_mult"]), .15, (N, T))), gust)
     rain_mult = np.exp(rng.normal(0, K["rain_sigma"], (N, 1)))
+    # wind direction per member and hour: the NWS direction plus its forecast error; a member whose storm passes on a
+    # different side of the house turns further (added in the track block below)
+    d0 = np.array([w["dir"].get(t) if w["dir"].get(t) is not None else np.nan for t in times], float)
+    d0 = np.where(np.isnan(d0), np.nanmedian(d0) if np.isfinite(d0).any() else 180.0, d0)
+    dir_m = d0[None, :] + rng.normal(0, K["dir_sigma"], (N, 1)) + K["dir_sigma_hourly"] * ar1(rng, (N, T), .9)
     out = {"tracks": None}
     if track:
         issue, pts = track
@@ -1224,11 +1253,17 @@ def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
             ex, ey = (lon - lo_) * np.cos(np.radians(lat)), (lat - la_)
             tx, ty = -ey, ex; tn = np.hypot(tx, ty) + 1e-9
             V = V + 0.5 * speed_kmh / 1.852 * (tx * ux + ty * uy) / tn * (V / np.maximum(v_, 1))
-            return np.maximum(V, 0) * K["land_factor"] * K["gust_factor"] * KT2MPH, r
-        gv_m, dist_m = site_gust(mlat, mlon, mv, rmax, B)
-        gv_d, dist_d = site_gust(olat, olon, ov, willoughby_rmax(np.maximum(ov, 15), olat), 1.3)
+            # direction the wind blows from: cyclonic tangent turned toward the centre by the surface inflow angle
+            a = math.radians(K["inflow_deg"]); en = np.hypot(ex, ey) + 1e-9
+            vx, vy = math.cos(a) * tx / tn - math.sin(a) * ex / en, math.cos(a) * ty / tn - math.sin(a) * ey / en
+            return np.maximum(V, 0) * K["land_factor"] * K["gust_factor"] * KT2MPH, r, (np.degrees(np.arctan2(vx, vy)) + 180) % 360
+        gv_m, dist_m, dv_m = site_gust(mlat, mlon, mv, rmax, B)
+        gv_d, dist_d, dv_d = site_gust(olat, olon, ov, willoughby_rmax(np.maximum(ov, 15), olat), 1.3)
         C = K["blend_C_mph"]
         gust = gust * (gv_m + C) / (gv_d + C)
+        # the NWS direction already holds the official storm's turning; a member adds its own track's difference, weighted
+        # by how much of its wind the vortex supplies
+        dir_m = dir_m + gv_m / (gv_m + C) * ((dv_m - dv_d[None, :] + 180) % 360 - 180)
         rain_mult = rain_mult * np.clip(np.exp(-(dist_m.min(1, keepdims=True) - dist_d.min()) / 400), 0.3, 3)
         out.update(official=dict(lat=olat.round(3).tolist(), lon=olon.round(3).tolist(), vmax=ov.round(1).tolist(),
                                  dist_mi=(dist_d / 1.609).round(1).tolist()),
@@ -1240,9 +1275,14 @@ def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
     total_rain = rain.sum(1) + site["past_rain_in"]
     wet = np.clip((total_rain - 0.5) / 2.0, 0, 1)                           # 0 dry ... 1 saturated
     dirs_from = np.array([w["dir"].get(t) or 0 for t in times], float)
+    dir_m = dir_m % 360
     loc = local or {}
-    # house: Hazus-style fragilities are indexed by the open-terrain 10 m gust; hills add ASCE 7 Kzt by direction
-    kzt_t = np.array([site["kzt"][int(((d + 22.5) % 360) // 45)]["kzt"] for d in dirs_from]) if site.get("kzt") else np.ones(T)
+    # each member-hour uses the CFD direction nearest its own wind direction (local ratios are per simulated direction)
+    secs = np.array(loc.get("sectors") or [0.0])
+    sidx = np.abs((dir_m[..., None] - secs + 180) % 360 - 180).argmin(-1)              # (N, T)
+    per = lambda a: None if a is None else np.asarray(a, float)[sidx]
+    # hills add ASCE 7 Kzt by each member's direction
+    kzt_t = np.array([k["kzt"] for k in site["kzt"]])[((dir_m + 22.5) % 360 // 45).astype(int)] if site.get("kzt") else np.ones((N, T))
     # trees: per-tree bending moment from the CFD-local crown-top gust vs. stem-break and uprooting resistance
     p_tree_hit = np.zeros(N); p_limb_any = np.zeros(N); tree_out = []
     radius = math.sqrt(house["L"] * house["W"] / math.pi)
@@ -1252,7 +1292,7 @@ def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
         if t["h"] < K["tree_min_h"]:       # saplings and shrubs: flexible, outside the model's range, can't harm the house
             tree_out.append(dict(p_fail=0, p_hit=0, p_limb=0, dbh_cm=None, crit_mph=None, mode="small", gust50=None, gust95=None))
             continue
-        g_loc = gust * (Rt[k][None, :] if Rt is not None else 1.0)
+        g_loc = gust * (per(Rt[k]) if Rt is not None else 1.0)
         gpk = g_loc.max(1); u = gpk * 0.44704
         dbh, Mb, Mu = tree_mechanics(t["h"], t["cw"])
         Mu_wet = Mu * (1 - K["wet_soil_tree_reduction"] * wet)
@@ -1263,7 +1303,7 @@ def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
         if dist - radius < reach:
             to_house = math.degrees(math.atan2(-t["x"], -t["y"])) % 360
             half_w = math.atan2(radius, max(dist, 1))
-            downwind = (dirs_from[g_loc.argmax(1)] + 180) % 360
+            downwind = (dir_m[np.arange(N), g_loc.argmax(1)] + 180) % 360
             dang = np.radians((to_house - downwind + 180) % 360 - 180)
             kap = K["fall_kappa"]
             p_dir = np.clip(np.exp(kap * np.cos(dang)) / (2 * math.pi * np.i0(kap)) * 2 * half_w, 0, 1)
@@ -1284,9 +1324,9 @@ def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
     # terrain at that height with the hill factor) over the code design gust at the same height
     hm_ft = 3.281 * (house.get("eave_m", 6.6) + house.get("ridge_m", 9.0)) / 2
     kz = 2.01 * (max(hm_ft, 15) / 900) ** (2 / 9.5)                       # ASCE 7-22 Table 26.10-1, exposure C
-    appr = loc.get("appr")
+    appr = per(loc.get("appr"))
     to_h = np.where(np.isfinite(appr), appr, math.sqrt(kz) * kzt_t) if appr is not None else math.sqrt(kz) * kzt_t
-    g_h = gust * to_h[None, :]
+    g_h = gust * to_h
     rho_pk = ((g_h / (K["design_mph"] * math.sqrt(kz))) ** 2).max(1)
     cls = house.get("cls", "WSF"); age_k = roof_scale ** 2 if cls in ("WSF", "WMF") else 1.0   # shingle age weakens the roof cover
     dmg = [ndtr(np.log(rho_pk / (m * age_k)) / (2 * b)) for m, b in K["dmg_class"][cls]]
@@ -1324,12 +1364,26 @@ def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
                         design=K["design_mph"], kz=round(kz, 3), hm_ft=round(hm_ft, 1)),
     )
     if loc.get("house") is not None:
-        hl = gust * loc["house"][None, :]; yl = gust * loc["yard"][None, :]
+        hl = gust * per(loc["house"]); yl = gust * per(loc["yard"])
+        ap = per(loc.get("appr"))
         for i, hr in enumerate(out["hours"]):
             hr["roof"] = np.percentile(hl[:, i], [5, 50, 95]).round(1).tolist()
             hr["yard"] = np.percentile(yl[:, i], [5, 50, 95]).round(1).tolist()
-            if loc.get("appr") is not None and np.isfinite(loc["appr"][i]):   # approach-flow gust at mean roof height (loads)
-                hr["appr"] = np.percentile(gust[:, i] * loc["appr"][i], [5, 50, 95]).round(1).tolist()
+            ok_ = np.isfinite(ap[:, i]) if ap is not None else None
+            if ok_ is not None and ok_.mean() > .5:   # approach-flow gust at mean roof height (loads), where checks passed
+                hr["appr"] = np.percentile(gust[ok_, i] * ap[ok_, i], [5, 50, 95]).round(1).tolist()
+    # how much of the damaging wind blew within half a sector of a simulated direction (the rest borrows the nearest)
+    wt = gust ** 2 * (gq[2][None, :] >= .5 * gq[2].max())
+    near = np.abs((dir_m - secs[sidx] + 180) % 360 - 180) <= 11.25
+    out["dir_cover"] = round(float((wt * near).sum() / max(wt.sum(), 1e-9)), 3)
+    out["_dir"], out["_gust"] = dir_m, gust                                   # for choosing CFD directions; dropped later
+    # tornadoes: SPC outlook -> path scenarios -> house damage, combined with the straight-line damage
+    if site.get("spc"):
+        tr = tornado.tornado_risk(site["spc"], K["dmg_class"][cls], K["design_mph"] * math.sqrt(kz), rng, age_k)
+        out["tornado"] = tr
+        for k_ in ("cosmetic", "minor", "moderate", "severe"):
+            out["probs"]["wind_" + k_] = out["probs"][k_]
+            out["probs"][k_] = 1 - (1 - out["probs"][k_]) * (1 - tr["probs"][k_])
     return out
 
 # ---------------------------------------------------------------- orchestration
@@ -1511,13 +1565,12 @@ def build(args):
         dem_wide = soft(dem_grid, clat, clon, 1600, 81, 13)
     kzt = kzt_by_direction(dem_wide, 1600) if dem_wide is not None else [dict(kzt=1.0, H=0, Lh=None)] * 8
 
-    # ---- 3. neighbourhood CFD for the wind directions that matter in this forecast
+    # ---- 3. neighbourhood CFD for the wind directions the ensemble actually blows from
+    site = dict(past_rain_in=past_rain, roof_age=args.roof_age, canopy_frac=canopy,
+                soil_group=(so or {}).get("group", "C"), river=rv, kzt=kzt)
     g_nws = np.array([w["gust"].get(t) or 0 for t in times]); d_nws = [w["dir"].get(t) for t in times]
-    bins = {}
-    for g, d in zip(g_nws, d_nws):
-        if d is not None and g >= 0.5 * g_nws.max():
-            b = round(d / 22.5) % 16 * 22.5; bins[b] = bins.get(b, 0) + g
-    sectors = sorted(bins, key=bins.get, reverse=True)[:args.cfd_dirs] or [180.0]
+    pre = simulate(clat, clon, times, w, track, site, house, [], np.random.default_rng(args.seed))
+    sectors = pick_sectors(pre["_dir"], pre["_gust"], args.cfd_dirs)
     ang = lambda a, b: abs((a - b + 180) % 360 - 180)
     hour_sector = [min(range(len(sectors)), key=lambda i: ang(sectors[i], d or sectors[0])) for d in d_nws]
     G_open = np.clip(g_nws / np.maximum([w["sust"].get(t) or 1 for t in times], 1), 1.25, 2.0)
@@ -1559,26 +1612,26 @@ def build(args):
         # probes just outside every wall (2 m) and out in the yard (7 m), not on a circle that can cut an L-shaped outline
         ring = [(wl["x"] + 2 * wl["nx"], wl["y"] + 2 * wl["ny"]) for wl in house["walls"]]
         yard = [(wl["x"] + 7 * wl["nx"], wl["y"] + 7 * wl["ny"]) for wl in house["walls"]]
-        def ratios(pts, how):
-            out = np.zeros(len(times))
-            per = []
+        def ratios(pts, how):   # local / open-terrain gust per simulated direction
+            out = []
             for s in sectors:
-                F = fields[s]; per.append([probe(F, x, y, zz, E, R) for x, y, zz in pts])
-            for i in range(len(times)):
-                s = hour_sector[i]; F = fields[sectors[s]]
-                v = [gust_ratio(k_, sg, F["z0"], z_agl=p_[2]) for (k_, sg), p_ in zip(per[s], pts)]
-                out[i] = how(v)
-            return out
-        local = dict(house=ratios([(x, y, eave + 1) for x, y in ring] + [(0, 0, ridge + 1.5)], max),
+                F = fields[s]
+                out.append(how([gust_ratio(*probe(F, x, y, zz, E, R), F["z0"], z_agl=zz) for x, y, zz in pts]))
+            return np.array(out)
+        local = dict(sectors=sectors, house=ratios([(x, y, eave + 1) for x, y in ring] + [(0, 0, ridge + 1.5)], max),
                      yard=ratios([(x, y, 2.0) for x, y in yard], np.mean),
                      trees=np.array([ratios([(t["x"], t["y"], t["h"] + 1)], max) for t in trees]) if trees else None)
         if house.get("approach"):
-            local["appr"] = np.array([house["approach"][s] if house["approach"][s] is not None else np.nan for s in hour_sector])
+            local["appr"] = np.array([a if a is not None else np.nan for a in house["approach"]])
 
-    site = dict(past_rain_in=past_rain, roof_age=args.roof_age, canopy_frac=canopy,
-                soil_group=(so or {}).get("group", "C"), river=rv, kzt=kzt)
+    spc = soft(tornado.spc_outlooks, lambda u: get(u, timeout=20), clat, clon, times[0], times[-1] + dt.timedelta(hours=1))
+    if spc:
+        site["spc"] = spc
+        print("• SPC tornado outlook: " + "; ".join(f"day {d['day']} {d['p25']:.0%} within 25 mi" + (f", CIG{d['cig']}" if d["cig"] else "")
+                                                   for d in spc), file=sys.stderr)
     print(f"• Monte Carlo ({K['members']} members)…", file=sys.stderr)
     sim = simulate(clat, clon, times, w, track, site, house, trees, np.random.default_rng(args.seed), local)
+    sim.pop("_dir"); sim.pop("_gust")
     for t, r in zip(trees, sim["trees"]):
         t.update(r)
 
@@ -1627,7 +1680,8 @@ def build(args):
                                   sig=b64(np.clip(fields[s]["sig"] * 200, 0, 255).round().astype(np.uint8)),
                                   lattice=[int(v) for v in fields[s]["n_lattice"]]) for s in sectors],
                     hour_sector=hour_sector, G_open=G_open.round(3).tolist(), steps=args.cfd_steps,
-                    house=local["house"].round(3).tolist(), yard=local["yard"].round(3).tolist())
+                    house=local["house"][hour_sector].round(3).tolist(), yard=local["yard"][hour_sector].round(3).tolist(),
+                    cover=sim["dir_cover"])
 
     house_r = math.sqrt(house["L"] * house["W"] / math.pi)
     hz = sim["probs"]; hg = sim["house_gust"]
@@ -1637,6 +1691,7 @@ def build(args):
     near_trees = [t for t in big if math.hypot(t["x"], t["y"]) < 30 + house_r]
     reach_trees = [t for t in big if math.hypot(t["x"], t["y"]) - house_r < t["h"]]
     worst = max(trees, key=lambda t: t["p_hit"], default=None)
+    noun = "house" if house["cls"] == "WSF" else "building"
     risks = [
         dict(key="power", title="Power outage", p=hz["power"],
              plain=f"{lvl(hz['power']).capitalize()}. Peak open-terrain gust near {sim['peak']['p50']:.0f} mph"
@@ -1645,21 +1700,21 @@ def build(args):
                  "outage models (Guikema et al. 2014; Han et al. 2009). The 50 % point drops when soil is wet and tree cover is high.",
              calc=[["Peak gust (median)", f"{sim['peak']['p50']:.0f} mph"], ["50 % outage gust", f"{K['outage_g50'] - 8 * sim['wet'] - 6 * canopy:.0f} mph"],
                    ["Tree cover within 100 m", f"{canopy:.0%}"], ["Soil wetness index", f"{sim['wet']:.2f}"]]),
-        dict(key="limb", title="Branches down in your yard", p=hz["limb"],
-             plain=f"{lvl(hz['limb']).capitalize()}. {len(near_trees)} trees within 100 ft of your walls, gusts at their crowns "
+        dict(key="limb", title="Branches down in your yard" if noun == "house" else "Branches down around the building", p=hz["limb"],
+             plain=f"{lvl(hz['limb']).capitalize()}. {len(near_trees)} trees within 100 ft of the walls, gusts at their crowns "
                    f"computed from the wind simulation.",
-             how="Each tree within 30 m of the house gets its own crown-top gust from the CFD field. Branch failure follows an "
+             how=f"Each tree within 30 m of the {noun} gets its own crown-top gust from the CFD field. Branch failure follows an "
                  "empirical lognormal curve (median 55 mph gust), weakened when the soil is wet.",
              calc=[["Trees within 100 ft", str(len(near_trees))], ["Median crown gust (nearest tree)",
                    f"{min(near_trees, key=lambda t: math.hypot(t['x'], t['y']))['gust50']:.0f} mph" if near_trees else "n/a"]]),
-        dict(key="tree_hit", title="Tree falls on the house", p=hz["tree_hit"],
-             plain=f"{lvl(hz['tree_hit']).capitalize()}. {len(reach_trees)} trees are tall enough to reach the house."
+        dict(key="tree_hit", title=f"Tree falls on the {noun}", p=hz["tree_hit"],
+             plain=f"{lvl(hz['tree_hit']).capitalize()}. {len(reach_trees)} trees are tall enough to reach the {noun}."
                    + (f" The riskiest is {worst['h'] * 3.28:.0f} ft tall, {math.hypot(worst['x'], worst['y']) * 3.28:.0f} ft away; it would need a "
                       f"~{worst['crit_mph']} mph gust to {'uproot' if worst['mode'] == 'uproot' else 'snap'}." if worst and worst["p_hit"] > 0 else ""),
              how="Mechanistic tree model in the style of HWIND / ForestGALES: wind moment 0.5·ρ·Cd(u)·A·u²·z vs. stem-break "
                  "(MOR·π·DBH³/32) and uprooting (Creg·stem mass) resistance, DBH from LiDAR height and crown width (Jucker et al. 2017). "
-                 "A failed tree falls downwind with von Mises scatter; it hits if the house lies in that arc and within reach.",
-             calc=[["Trees that can reach the house", str(len(reach_trees))], ["Lowest critical gust nearby",
+                 f"A failed tree falls downwind with von Mises scatter; it hits if the {noun} lies in that arc and within reach.",
+             calc=[[f"Trees that can reach the {noun}", str(len(reach_trees))], ["Lowest critical gust nearby",
                    f"{min((t['crit_mph'] for t in reach_trees), default=0)} mph" if reach_trees else "n/a"],
                    ["Tree heights from", f"USGS LiDAR {lidar_meta['year']}" if lidar_meta else "assumed"]]),
         dict(key="cosmetic", title=DMG_TEXT[house["cls"]][0], p=hz["cosmetic"],
@@ -1688,6 +1743,26 @@ def build(args):
              how="SCS curve-number runoff (USDA TR-55) for a residential lot; more than 0.5 in of runoff counts as ponding.",
              calc=[["Curve number", str({"A": 61, "B": 75, "C": 83, "D": 87}[site["soil_group"]])], ["Rain in last 48 h", f"{past_rain:.2f} in"]]),
     ]
+    tn = sim.get("tornado")
+    odds = lambda p: "none" if p <= 0 else f"{p:.1%}" if p >= .001 else f"1 in {1 / p:,.0f}"
+    spc_p = lambda p: f"{p:.0%}" if p else "under 2 %"
+    if tn:
+        tp = tn["probs"]; top = max(tn["days"], key=lambda d: d["p25"])
+        risks.append(dict(key="tornado", title=f"Tornado winds at the {noun}", p=tp["ef0"],
+                          plain=(f"{lvl(tp['ef0']).capitalize()}. SPC gives a {top['p25']:.0%} chance of a tornado within 25 miles "
+                                 f"(day {top['day']}{', strong tornadoes possible' if top['cig'] else ''}). Even then, a path "
+                                 f"crossing this lot is rare: about 1 in {1 / max(tp['ef0'], 1e-12):,.0f}."
+                                 if top["p25"] else f"Very unlikely. The {noun} is outside SPC's tornado risk areas (under 2 % "
+                                 "within 25 miles)."),
+                          how="SPC's probabilistic tornado outlook gives the chance of a tornado within 25 mi. Path scenarios "
+                              "(rating, length, width, forward speed) are drawn from US climatology, shifted toward strong "
+                              f"tornadoes by SPC's conditional-intensity level. Each passes the {noun} as a translating modified "
+                              "Rankine vortex; the share of the 25-mile circle where the lot would feel a given wind is "
+                              "integrated exactly. Damage uses this building's own curves; EF speeds are damage-equivalent, so "
+                              "no extra tornado load factor is applied. Included in the damage probabilities above.",
+                          calc=[["Chance of a tornado within 25 mi", ", ".join(f"day {d['day']}: {spc_p(d['p25'])}" for d in tn["days"])],
+                                ["Lot sees tornado-force wind (EF0+)", odds(tp["ef0"])], ["Lot sees EF2+ wind", odds(tp["ef2"])],
+                                ["Minor damage from a tornado", odds(tp["minor"])]]))
     if hz["creek"] is not None:
         risks.append(dict(key="creek", title=f"{rv['name']} out of its banks", p=hz["creek"],
                           plain=f"{lvl(hz['creek']).capitalize()}. Now {rv['stage']:.1f} ft; flooding starts at {rv['minor']} ft. Gauge is {rv['dist_mi']} mi away.",
@@ -1700,7 +1775,7 @@ def build(args):
                                        mb=int(storm["pressure"]), adv=storm["publicAdvisory"]["advNum"],
                                        url=storm["publicAdvisory"]["url"], lat=storm["latitudeNumeric"], lon=storm["longitudeNumeric"],
                                        move=f"{storm['movementSpeed']} mph toward {storm['movementDir']}°"),
-                  members=K["members"]),
+                  members=K["members"], engine=ENGINE_VERSION),
         sim=sim, risks=risks, alerts=w["alerts"],
         site=dict(elev_ft=el, flood_zone=zone, zone_sub=(fz or {}).get("ZONE_SUBTY"), sfha=(fz or {}).get("SFHA_TF"),
                   soil=so, river=rv, canopy=canopy, past_rain=past_rain, kzt=kzt, lidar=lidar_meta, dem=dem_src, leaf=leaf, lai=lai,
@@ -1749,6 +1824,19 @@ FORECAST VALID 12/1800Z...DISSIPATED"""
     s = simulate(35.05, -90.03, times, w, (issue, pts), site, dict(cx=0, cy=0, L=18, W=12),
                  [dict(x=0, y=20, h=15, cw=10)], np.random.default_rng(1))
     assert s["probs"]["minor"] < 0.01 and 20 < s["peak"]["p50"] < 45, s["peak"]
+    # per-member wind direction: a hurricane passing 25 km east, moving north, blows from the north on the house; members
+    # whose track crosses to the west of the house swing to southerly winds, which a single forecast direction would miss
+    tt = [dt.datetime(2026, 10, 11, h, tzinfo=dt.timezone.utc) for h in range(13)]
+    w2 = dict(gust={t: 60.0 for t in tt}, sust={t: 40.0 for t in tt}, qpf={t: .1 for t in tt}, dir={t: 0 for t in tt}, pop={}, thunder={})
+    pts2 = [(tt[0], 35.05 - 1.5, -90.03 + .28, 90), (tt[-1] + dt.timedelta(hours=12), 35.05 + 1.5, -90.03 + .28, 90)]
+    s2 = simulate(35.05, -90.03, tt, w2, (tt[0] - dt.timedelta(hours=24), pts2), site, dict(cx=0, cy=0, L=18, W=12), [], np.random.default_rng(2))
+    d6 = s2["_dir"][:, 6]
+    south = ((d6 > 90) & (d6 < 270)).mean()
+    assert 0.03 < south < 0.6, south
+    secs = pick_sectors(s2["_dir"], s2["_gust"], 6)
+    assert 2 <= len(secs) <= 6 and 0.0 in secs, secs
+    assert pick_sectors(np.full((50, 4), 200.0), np.full((50, 4), 30.0), 6) == [202.5]
+    tornado.selftest()
     # tree model: calibrated reference tree fails at its reference gust; a slender tree of the same height is weaker
     calibrate_trees(); h, cw, mph = K["tree_ref"]
     _, Mb, Mu = tree_mechanics(h, cw)
@@ -1815,7 +1903,8 @@ def main():
     ap.add_argument("--tree-height", type=float, default=K["tree_height_m"], help="typical tree height, metres")
     ap.add_argument("--members", type=int, default=K["members"])
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--cfd-dirs", type=int, default=3, help="wind directions to simulate with CFD (cached per site)")
+    ap.add_argument("--cfd-dirs", type=int, default=6, help="most wind directions to simulate with CFD; the ensemble picks "
+                    "the ones holding 90 %% of its damaging wind (cached per site)")
     ap.add_argument("--cfd-steps", type=int, default=1900)
     ap.add_argument("--no-cfd", action="store_true")
     ap.add_argument("--json", action="store_true", help="also write the raw data bundle")
@@ -1842,7 +1931,7 @@ def main():
     slug = re.sub(r"[^a-z0-9]+", "-", data["meta"]["address"].lower()).strip("-")[:60]
     out = Path(a.out or f"report-{slug}.html")
     m = data["meta"]; street = m["address"].split(",")[0].title()
-    title = f"{m['storm']['name']} at {street}" if m["storm"] else f"Storm Watch {street}"
+    title = f"{m['storm']['name']} at {street}" if m["storm"] else f"StormVoyance · {street}"
     html = (HERE / "template.html").read_text().replace("__TITLE__", title, 1) \
         .replace("/*__DATA__*/null", json.dumps(data, separators=(",", ":"), default=float))
     out.write_text(html)

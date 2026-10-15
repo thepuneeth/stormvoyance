@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bearing, clamp, compass, ft, makeModel, monotonePath, pct, quantileAt, RAMP, riskiestTree, type Bundle, type Hour, type Model, type Tree } from "./model";
+import { bearing, bldNoun, clamp, compass, ft, makeModel, monotonePath, pct, quantileAt, RAMP, riskiestTree, type Bundle, type Hour, type Model, type Tree } from "./model";
 import { createSiteScene, type FocusTarget as Focus, type Layers, type View } from "./siteScene";
 import { createStormMap } from "./stormMap";
 import { createPlan } from "./plan2d";
@@ -257,7 +257,7 @@ function RiskCard({ M, onPick, onAll }: { M: Model; onPick: (k: string) => void;
       <header><span className="lbl">Risks</span><span className="lbl">next {M.NT} h</span></header>
       <ul>{top.map((r: { key: string; title: string; p: number }) => {
         const tree = TREE_RISKS.includes(r.key), house = HOUSE_RISKS.includes(r.key);
-        return <li key={r.key}><button onClick={() => onPick(r.key)} title={tree ? "Show the riskiest tree" : house ? "Show the loads on the house" : "Open the details"}>
+        return <li key={r.key}><button onClick={() => onPick(r.key)} title={tree ? "Show the riskiest tree" : house ? `Show the loads on the ${bldNoun(M.D.house)}` : "Open the details"}>
           <i className="sev" style={{ background: riskCol(r.p || 0) }} /><span className="t">{r.title}</span><span className="p">{pct(r.p)}</span>
           <Icon name={tree ? "tree" : house ? "house" : "arrow-right"} size={15} /></button></li>;
       })}</ul>
@@ -293,12 +293,12 @@ function Shortcuts({ hasStorm, onClose }: { hasStorm: boolean; onClose: () => vo
 function TreeTip({ M, t, x, y, idx }: { M: Model; t: Tree; x: number; y: number; idx: number }) {
   const HR = Math.sqrt(M.D.house.L * M.D.house.W / Math.PI), box = document.querySelector(".rv .stagebox")!.getBoundingClientRect();
   const rows: [string, string][] = [
-    ["Distance to house", `${ft(Math.max(0, Math.hypot(t.x, t.y) - HR))} ft`],
+    [`Distance to ${bldNoun(M.D.house)}`, `${ft(Math.max(0, Math.hypot(t.x, t.y) - HR))} ft`],
     ["Trunk (from LiDAR size)", t.dbh_cm ? `≈ ${Math.round(t.dbh_cm / 2.54)} in` : "n/a"],
     ["Gust at its crown, this hour", `${Math.round(M.localGust(t.x, t.y, t.h + 1, idx))} mph`],
     ["Storm peak (95%)", t.gust95 ? `${Math.round(t.gust95)} mph` : "n/a"],
     [`Gust to ${t.mode === "uproot" ? "uproot" : "snap"} it`, t.crit_mph ? `≈ ${t.crit_mph} mph` : "n/a"],
-    ["Chance it fails", pct(t.p_fail)], ["Chance it hits the house", pct(t.p_hit)],
+    ["Chance it fails", pct(t.p_fail)], [`Chance it hits the ${bldNoun(M.D.house)}`, pct(t.p_hit)],
   ];
   return (
     <div className="tip glass" style={{ left: clamp(x + 16, 8, box.width - 268), top: clamp(y + 16, 8, box.height - 230) }}>
@@ -413,10 +413,18 @@ function Summary({ M, open }: { M: Model; open: boolean }) {
   const argmax = (v: number[]) => v.reduce((a, x, i) => x > v[a] ? i : a, 0);
   const openS = HRS.map(h => h.gust[2]), roofS = HRS[0].roof ? HRS.map(h => h.roof[1]) : null;
   const openPk = Math.max(...openS), roofPk = roofS ? Math.max(...roofS) : null, pkI = argmax(roofS || openS);
-  const worst = Math.max(P.power, P.tree_hit * 4, P.minor * 6, P.flash, P.creek || 0);
+  const nn = bldNoun(D.house);
+  // the headline names what drives it: [chance, wording when possible, wording when likely]
+  const drivers: [number, string, string][] = [
+    [P.limb, "Branches may come down. Clear the yard tonight.", "Branches likely down. Move cars and clear the yard."],
+    [P.power, "Power cuts possible. Charge up tonight.", "Power cuts likely. Charge up and plan for an outage."],
+    [P.tree_hit * 4, `A tree could reach the ${nn}. Prepare tonight.`, `A tree may hit the ${nn}. Prepare now.`],
+    [P.minor * 6, "Some damage possible. Prepare tonight.", "Damage likely. Prepare now."],
+    [Math.max(P.flash, P.creek || 0), "Flooding possible nearby. Prepare tonight.", "Flooding likely nearby. Prepare now."]];
+  const [worst, maybe, likely] = drivers.reduce((a, d) => d[0] > a[0] ? d : a);
   const word = openPk >= 25 ? "Windy" : openPk >= 12 ? "Breezy" : "Calm";   // the same bands as weather.ts condition()
-  const verdict = worst < .05 ? (word === "Windy" ? "Windy, but low risk to the house." : `${word}. Low risk to the house.`)
-    : worst < .3 ? "Some damage possible. Prepare tonight." : worst < .6 ? "Damage likely. Prepare now." : "High impact expected.";
+  const verdict = worst < .05 ? (word === "Windy" ? `Windy, but low risk to the ${nn}.` : `${word}. Low risk to the ${nn}.`)
+    : worst < .3 ? maybe : worst < .6 || P.minor < .1 ? likely : "High impact expected.";
   const top = [...D.risks].sort((a, b) => b.p - a.p)[0];
   let close = null;
   if (S.official) {
@@ -472,7 +480,7 @@ function Plan({ M }: { M: Model }) {
   if (pk.p50 > 25) before.push("Bring in or tie down patio furniture, trash bins and anything that can blow around.");
   if (P.power > .02) before.push(`Charge phones and battery packs. Chance of losing power: ${pct(P.power)}.`);
   if (S.rain_total.p50 > .3 || P.ponding > .05) before.push("Clear gutters and downspouts, and point them away from the foundation.");
-  if (near) before.push(`Park cars away from the ${near} trees taller than 26 ft within 80 ft of the house.`);
+  if (near) before.push(`Park cars away from the ${near} trees taller than 26 ft within 80 ft of the ${bldNoun(D.house)}.`);
   if (P.tree_hit > .01) before.push(`Sleep in a room away from the tall trees on the ${upwind} side.`);
   before.push("Turn on Wireless Emergency Alerts on your phone.");
   during.push(`Strongest gusts: ${win}, from the ${upwind}.`);
@@ -482,7 +490,8 @@ function Plan({ M }: { M: Model }) {
   after.push("Soaked ground keeps trees vulnerable for a day or two. Look up before walking under them.");
   after.push("Treat every downed line as live and report it to your utility.");
   if (P.power > .02) after.push("Run any generator outdoors, at least 20 ft from doors and windows.");
-  after.push("Walk around the house: check roof corners and the ridge for lifted shingles, and look for loose soffit or gutters.");
+  after.push(bldNoun(D.house) === "house" ? "Walk around the house: check roof corners and the ridge for lifted shingles, and look for loose soffit or gutters."
+    : "Walk around the building: check roof edges and corners, flashing, cladding panels and windows on the windward side.");
   if (D.site.river) after.push(`Check ${D.site.river.name}. Creeks crest hours after the rain ends.`);
   const sec = (t: string, L: string[]) => <><h3 className="sub">{t}</h3><ul>{L.map(x => <li key={x}>{x}</li>)}</ul></>;
   return (
@@ -499,7 +508,7 @@ function Plan({ M }: { M: Model }) {
 function Method({ M, standaloneUrl }: { M: Model; standaloneUrl: string }) {
   const { D, W } = M, s = D.site, H = D.house, L = s.lidar, k = D.knobs, sec0 = W && W.sectors[0];
   const steps: [string, string][] = [
-    ["Finds your roof", `Building outline (${H.src}): ${ft(H.L)} × ${ft(H.W)} ft, ${H.stories} storeys, eaves ${ft(H.eave_m)} ft, ridge ${ft(H.ridge_m)} ft.`],
+    ["Finds your roof", `Building outline (${H.src}): ${ft(H.L)} × ${ft(H.W)} ft, ${H.stories} storeys, eaves ${ft(H.eave_m)} ft, ridge ${ft(H.ridge_m)} ft${H.roof_src ? (/^USGS/.test(H.roof_src) ? ` (measured, ${H.roof_src})` : ` (${H.roof_src.replace(/^assumed \((.*)\)$/, "assumed: $1; the LiDAR survey predates the building or misses it")})`) : ""}.`],
     ["Rebuilds the ground", `${s.dem} bare-earth elevation, ${D.scene.terrain.n * 2} m square around the house. Lot elevation ${s.elev_ft ? Math.round(s.elev_ft) + " ft" : "n/a"}; relief within a mile ${s.terrain_relief ? ft(s.terrain_relief) + " ft" : "n/a"}, checked for hill speed-up with the ASCE 7 topographic factor.`],
     ["Measures every tree", L ? `${L.points.toLocaleString()} airborne LiDAR returns from USGS survey ${L.survey.replace(/_/g, " ")}. Treetops are found with a height-dependent search window (Popescu & Wynne 2004). Trees cut down since ${L.year} are removed by checking current imagery. ${D.trees.filter((t: Tree) => t.h >= 8).length} trees over 26 ft are modelled one by one.` : "No LiDAR survey covers this point, so tree heights come from imagery and a typical height."],
     ["Simulates the wind around your lot", sec0 ? `3D lattice-Boltzmann large-eddy simulation (D3Q19, regularized BGK collision, Smagorinsky subgrid model, half-way bounce-back walls; GPU), the method behind fast urban-wind tools. Grid ${sec0.lattice.join(" × ")} cells of ${sec0.dx} m, ${W!.steps.toLocaleString()} time steps for each forecast wind direction (${W!.sectors.map(x => compass(x.dir)).join(", ")}). Buildings are solid walls; the ground carries a log-law surface-stress wall model; tree crowns are porous drag (leaf area index ${s.lai ?? k.tree_LAI}${s.leaf ? `: NASA MODIS shows the canopy at ${Math.round(s.leaf.factor * 100)}% of its summer leaf area on ${s.leaf.date}` : ""}). Every building's shape and height come from its footprint and the USGS LiDAR roof surface.${H.roof_cp?.some((x: unknown) => x != null) ? ` A second, nested simulation around the building${H.cfd_grid ? ` (${H.cfd_grid.dx} m cells, ${H.cfd_grid.cells.join(" × ")})` : ""}, driven by the coarse run's wind at its edge, gives the pressure on each wall and the roof against the free-stream static pressure and the approach-flow dynamic pressure at mean roof height (ASCE 7 / AIJ convention). Loads shown are net of the building's internal pressure, taken as the mean of its wall pressures (air leaks in through every wall).` : ""} The incoming wind has a log-law profile and synthetic turbulence (Smirnov et al. 2001) for upwind roughness z₀ ≈ ${W!.sectors.map(x => x.z0.toFixed(2)).join(" / ")} m, measured from building and tree density (Macdonald et al. 1998).` : "The wind simulation was not run for this report."],
@@ -512,10 +521,11 @@ function Method({ M, standaloneUrl }: { M: Model; standaloneUrl: string }) {
       return `${w.length} weather models are blended by EMOS, the statistical post-processing used by NWS and ECMWF: weights, bias and spread are refit every run to the peak gusts measured over the last ${C.train_days} days at ${C.stations.join(", ")}, and storm energy (CAPE) widens the upper tail. Current weights: ${on.map(([n, x]) => `${n} ${x.toFixed(2)}`).join(", ")}${off.length ? ` (${off.join(", ")} added nothing here lately)` : ""}.`
         + (v ? ` Tested the honest way (each day predicted only from the days before it) over the last 60 days: gust error ${(v.skill * 100).toFixed(0)}% lower than an equal-weight blend, and the 90% range held ${(v.cover90_new * 100).toFixed(0)}% of measured gusts (old method: ${(v.cover90_old * 100).toFixed(0)}%).` : "");
     })()],
-    ["Runs the storm 1,000 times", `NHC-style Monte Carlo (DeMaria et al. 2009): track and intensity errors drawn from NHC's 5-year verification with hour-to-hour correlation, a Holland wind profile and Kaplan–DeMaria inland decay, anchored to the NWS ${D.meta.office} hourly gust forecast.`],
-    ["Scores each hazard", `Trees: wind bending moment at each tree's crown vs. trunk strength (green-wood MOR ${k.tree_MOR / 1e6} MPa) and root anchorage, scaled so a typical mature hardwood fails near ${k.tree_ref[2]} mph (post-hurricane tree surveys), weaker in wet soil. House: Hazus wood-frame fragility curves with the ASCE 7 topographic factor. Wall pressures: ${H.roof_cp?.some((x: unknown) => x != null) ? "mean pressure coefficients from the nested house simulation, applied to the 3-second gust (quasi-steady)" : "ASCE 7 low-rise coefficients"}. Power: logistic outage curve. Water: SCS curve number and NWS river forecasts.`],
+    ["Runs the storm 1,000 times", `NHC-style Monte Carlo (DeMaria et al. 2009): track and intensity errors drawn from NHC's 5-year verification with hour-to-hour correlation, a Holland wind profile and Kaplan–DeMaria inland decay, anchored to the NWS ${D.meta.office} hourly gust forecast.${D.sim.dir_cover == null ? "" : ` Each run also has its own wind direction: the forecast direction plus its error, turned further when that run's storm passes on a different side of the house. The wind simulation is repeated for every direction that carries a real share of the damaging wind${W ? ` (${W.sectors.length} here, holding ${Math.round(((W as any).cover ?? 1) * 100)}% of it within half a sector)` : ""}, and each run reads the flow for its own direction.`}`],
+    ...(D.sim.dir_cover == null ? [] : [["Checks for tornadoes", D.sim.tornado ? `SPC's tornado outlook gives the chance of a tornado within 25 miles (${D.sim.tornado.days.map((d: any) => `day ${d.day}: ${Math.round(d.p25 * 100)}%`).join(", ")}). Thousands of path scenarios (rating, length, width, forward speed) are drawn from US climatology, shifted toward strong tornadoes by SPC's conditional-intensity level, and each passes the house as a moving Rankine vortex. The share of the 25-mile circle where the lot would feel each wind level is integrated exactly, then scored with this building's damage curves and added to the damage odds.` : "SPC's tornado outlook was unavailable, so tornadoes are not included."] as [string, string]]),
+    ["Scores each hazard", `Trees: wind bending moment at each tree's crown vs. trunk strength (green-wood MOR ${k.tree_MOR / 1e6} MPa) and root anchorage, scaled so a typical mature hardwood fails near ${k.tree_ref[2]} mph (post-hurricane tree surveys), weaker in wet soil. ${H.cls ? `Building (${H.cls_label}): the gust at mean roof height over the ASCE 7 design gust (${k.design_mph ?? 110} mph basic speed), squared, on lognormal damage curves for its construction class${H.cls === "WSF" ? " (Hazus-style wood-frame curves)" : ""}, with the ASCE 7 topographic factor` : "House: Hazus wood-frame fragility curves with the ASCE 7 topographic factor"}. Wall pressures: ${H.roof_cp?.some((x: unknown) => x != null) ? `net pressure coefficients from the nested ${bldNoun(H)} simulation, applied to the 3-second gust (quasi-steady)` : "ASCE 7 low-rise coefficients"}. Power: logistic outage curve. Water: SCS curve number and NWS river forecasts.`],
   ];
-  const src: [string, string | undefined][] = [["NHC / WPC advisory", D.meta.storm?.url], ["NWS gridded forecast (api.weather.gov)", "https://www.weather.gov/documentation/services-web-api"],
+  const src: [string, string | undefined][] = [["NHC / WPC advisory", D.meta.storm?.url], ["NWS gridded forecast (api.weather.gov)", "https://www.weather.gov/documentation/services-web-api"], ["SPC convective outlooks", "https://www.spc.noaa.gov/products/outlook/"],
     ["Open-Meteo archived model forecasts", "https://open-meteo.com/en/docs/previous-runs-api"], ["Iowa Environmental Mesonet ASOS 1-minute archive", "https://mesonet.agron.iastate.edu/request/asos/1min.phtml"],
     ["Gneiting et al. 2005, EMOS", "https://doi.org/10.1175/MWR2904.1"],
     ["USGS 3DEP LiDAR point clouds (AWS open data)", "https://registry.opendata.aws/usgs-lidar/"], ["USGS 3D Elevation Program", "https://www.usgs.gov/3d-elevation-program"],

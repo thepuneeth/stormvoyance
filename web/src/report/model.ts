@@ -10,6 +10,7 @@ export type Sector = { dir: number; z0: number; dx: number; z_base: number; nw: 
 export const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
 export const ft = (m: number) => Math.round(m * 3.281);
 // what to call the simulated building: "Your house" for homes, else its OSM name or construction class
+export const bldNoun = (H: { cls?: string }) => !H.cls || H.cls === "WSF" ? "house" : "building";
 export const bldName = (H: { cls?: string; name?: string | null }) => !H.cls || H.cls === "WSF" ? "Your house" : H.name || "Your building";
 export const pct = (p: number | null | undefined) => p == null ? "n/a" : p < .005 ? "<1%" : p < .1 ? (p * 100).toFixed(1).replace(/\.0$/, "") + "%" : p > .99 ? ">99%" : Math.round(p * 100) + "%";
 const C16 = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];

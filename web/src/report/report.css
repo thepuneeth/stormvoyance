@@ -275,6 +275,7 @@
   .rv .cardsbtn { display: grid; }
   .rv .cards { display: none; }
   .rv .side[data-cards="true"] .cards { display: flex; }
+  .rv .stagebox:has(.side[data-cards="true"]) .overlay { opacity: 0; }   /* scene labels would peek between the cards */
   .rv .credits { bottom: calc(var(--tl-h) + 40px); }
   /* legend and status lift clear of the dock row */
   .rv .lower, .rv[data-g3d] .lower { bottom: calc(var(--tl-h) + 40px); }
