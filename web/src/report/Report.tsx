@@ -430,7 +430,7 @@ function Summary({ M, open }: { M: Model; open: boolean }) {
   const [worst, maybe, likely] = drivers.reduce((a, d) => d[0] > a[0] ? d : a);
   const word = openPk >= 25 ? "Windy" : openPk >= 12 ? "Breezy" : "Calm";   // the same bands as weather.ts condition()
   const verdict = worst < .05 ? (word === "Windy" ? `Windy, but low risk to the ${nn}.` : `${word}. Low risk to the ${nn}.`)
-    : worst < .3 ? maybe : worst < .6 || P.minor < .1 ? likely : "High impact expected.";
+    : worst < .4 ? maybe : worst < .75 || P.minor < .1 ? likely : "High impact expected.";   // the same bands as the risk cards (possible < 40 %, likely < 75 %)
   const top = [...D.risks].sort((a, b) => b.p - a.p)[0];
   let close = null;
   if (S.official) {
