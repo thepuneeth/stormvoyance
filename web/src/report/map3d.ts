@@ -26,7 +26,8 @@ export async function createMap3d(M: Model, host: HTMLElement, key: string, onFa
   const google = await loadMaps(key, () => onFail("the API key was rejected"));
   const { Map3DElement } = await google.maps.importLibrary("maps3d") as { Map3DElement: new (o: object) => Map3D };
   // keep the camera over the simulated neighbourhood: no zooming out to the globe, no panning off to other towns
-  const BOX = D.scene.half + 300, RMAX = 650, dLat = BOX / mN, dLng = BOX / mE;
+  const RMAX = Math.max(650, Math.hypot(D.house.L, D.house.W) * 2.8);   // big buildings need the room on a portrait screen
+  const BOX = Math.max(D.scene.half + 300, RMAX), dLat = BOX / mN, dLng = BOX / mE;
   const map = new Map3DElement({ center: { lat: lat0, lng: lon0, altitude: g0 }, range: 300, tilt: 60, heading: 0, mode: "SATELLITE", defaultUIHidden: true,
     bounds: { south: lat0 - dLat, north: lat0 + dLat, west: lon0 - dLng, east: lon0 + dLng }, maxAltitude: RMAX, maxTilt: 82 });
   map.style.cssText = "position:absolute;inset:0;width:100%;height:100%";

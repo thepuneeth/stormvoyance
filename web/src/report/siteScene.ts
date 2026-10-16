@@ -45,7 +45,7 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   R.shadowMap.enabled = true; R.shadowMap.type = THREE.PCFShadowMap; R.shadowMap.autoUpdate = false; R.shadowMap.needsUpdate = true;
   R.info.autoReset = false;
   const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, 1, 1, 3000);
-  const ctl = new OrbitControls(cam, cv); ctl.enableDamping = true; ctl.maxPolarAngle = Math.PI * .47; ctl.minDistance = 18; ctl.maxDistance = 560; ctl.enableZoom = false;
+  const ctl = new OrbitControls(cam, cv); ctl.enableDamping = true; ctl.maxPolarAngle = Math.PI * .47; ctl.minDistance = 18; ctl.maxDistance = Math.max(560, Math.hypot(M.D.house.L, M.D.house.W) * 2.6); ctl.enableZoom = false;
   const engage = () => { ctl.enableZoom = true; };                        // no scroll hijack until the user engages the scene
   cv.addEventListener("pointerdown", engage);
   const P3 = (x: number, y: number, z: number) => new THREE.Vector3(x, z, -y);   // world (east, north, up) -> three (x, up, -north)
@@ -401,6 +401,7 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   const diag = Math.hypot(Math.max(...rg.map(p => p[0])) - Math.min(...rg.map(p => p[0])), Math.max(...rg.map(p => p[1])) - Math.min(...rg.map(p => p[1])));
   const hd = Math.max(52, 30 + diag * .95), hz = Math.max(30, hd * .58);
   const sd = Math.max(220, diag * 1.15), ks = sd > 220 ? 1 : 0;   // the lot view backs off for a building bigger than the lot
+  if (diag > 60) houseTag.pos.copy(P3(bx, by, gy0 + HS.ridge_m + 3));   // a big building is labelled at its middle, not its address point
   const cams: Record<"site" | "house", Pose> = {
     site: [P3(bx + Math.sin(pd + .55) * sd, by + Math.cos(pd + .55) * sd, sd * .64), P3(bx * ks, by * ks, 2)],
     house: [P3(bx + Math.sin(pd + .7) * hd, by + Math.cos(pd + .7) * hd, hz), P3(bx, by, Math.min(4, HS.eave_m * .4) + (diag > 60 ? HS.eave_m * .3 : 0))],
