@@ -921,7 +921,7 @@ def wall_list(ring):
                         len=round(L, 2), fb=round(math.degrees(math.atan2(nx, ny)) % 360, 1)))
     return out
 
-HOUSE_CFD_VERSION = "sw12"   # bump when the nested-pressure method changes: cached results are then recomputed
+HOUSE_CFD_VERSION = "sw13"   # bump when the nested-pressure method changes: cached results are then recomputed
 
 def _house_sector(args):
     """Fine LBM-LES box around the building, nested in the coarse run for the same direction: the coarse mean wind and
@@ -987,10 +987,16 @@ def _house_sector(args):
         t = np.linspace(-0.4, 0.4, 5) * w["len"]; z = np.linspace(1.0, max(1.5, house["eave_m"] - 0.5), 4)
         T_, Z_ = np.meshgrid(t, z)
         X = w["x"] - w["ny"] * T_ + w["nx"] * 0.8 * dx; Y = w["y"] + w["nx"] * T_ + w["ny"] * 0.8 * dx   # first cell outside
+        # a building bigger than the fine box (its size is capped by the coarse field) has walls near or past its edges,
+        # where the inlet and outlet conditions set the pressure: such walls stay unsampled rather than read wrong
+        inside = np.maximum(np.abs(X * d[0] + Y * d[1]), np.abs(X * p[0] + Y * p[1])) < half - max(15.0, 10 * dx)
+        if inside.mean() < .8:
+            walls.append(None); continue
         v = sample(X.ravel(), Y.ravel(), Z_.ravel()); walls.append(round(float(v.mean()), 3) if len(v) and np.isfinite(v).all() else None)
     lo_, hi_ = np.min(house["ring"], 0), np.max(house["ring"], 0)
     st = max(1.0, dx)
     GX, GY = np.meshgrid(np.arange(lo_[0], hi_[0], st), np.arange(lo_[1], hi_[1], st)); m = in_poly(GX, GY, house["ring"])
+    m &= np.maximum(np.abs(GX * d[0] + GY * d[1]), np.abs(GX * p[0] + GY * p[1])) < half - max(15.0, 10 * dx)   # same rule as walls
     rv = sample(GX[m], GY[m], smp(Hb, GX[m], GY[m], 0) + 0.8 * dx)
     ok = len(rv) and np.isfinite(rv).all()
     # internal pressure of an enclosed building with leakage spread over its walls: the length-weighted mean of the
@@ -1013,13 +1019,14 @@ def _workers(n):
     import cfd
     return 1 if cfd.best_solver() is not cfd.solve else min(n, max(1, (os.cpu_count() or 2) - 2))
 
-def nested_box(house, out_half):
+def nested_box(house, out_half, fine=1.0):
     """Fine-grid size for the building: 16 cells over its height on the GPU solver (8 on the CPU one) where the cell
     budget allows (AIJ / COST 732 ask for >= 10), a box reaching max(25 m, 4 H) past the outline, inside the coarse field,
     and five flow-throughs."""
     import cfd
     gpu = cfd.best_solver() is not cfd.solve
-    per_h, budget, dmin = (16, 6e6, 0.5) if gpu else (8, 4e6, K["house_dx"])   # cube benchmark: 16/H gives Cp 0.62, X_R 1.75 H
+    per_h, budget, dmin = (16, 6e6, 0.5) if gpu else (8, 4e6, K["house_dx"])   # cube benchmark: 16/H gives Cp 0.80, X_R 1.75 H
+    budget *= fine                                  # retry of a failed direction: a bigger cell budget, a finer grid
     span = float(np.ptp(np.asarray(house["ring"]), 0).max()); H = house["ridge_m"]
     dx = float(np.clip(H / per_h, dmin, max(dmin, span / 60)))
     half = min(span / 2 + max(25, 4 * H), out_half - 5)
@@ -1030,9 +1037,9 @@ def nested_box(house, out_half):
     steps = int(np.clip(5 * (2 * half / dx) / 0.06, 3600, 20000))
     return round(dx, 2), half, steps
 
-def house_pressures(MF, fields, key):
+def house_pressures(MF, fields, key, fine=1.0):
     """Nested fine CFD for each simulated direction (cached like the coarse fields)."""
-    dx, half, steps = nested_box(MF["house"], min(F["u"].shape[1] * F["dx"] / 2 for F in fields.values()))
+    dx, half, steps = nested_box(MF["house"], min(F["u"].shape[1] * F["dx"] / 2 for F in fields.values()), fine)
     out, todo = {}, []
     for th, F in fields.items():
         p = CACHE / "cfd" / f"{key}-house-{th:05.1f}-{dx}-{steps}-{HOUSE_CFD_VERSION}.json"
@@ -1641,6 +1648,16 @@ def build(args):
             lens = [wl["len"] for wl in house["walls"]]
             hp = {s: trim_walls(hp[s], lens) for s in hp}
             ok = {s: cp_ok(hp[s]) for s in sectors}   # a failed direction is null: the viewer uses ASCE 7 for it
+            bad = [s for s in sectors if not ok[s]]
+            if bad and nested_box(MF["house"], 1e9, 2.5)[0] < nested_box(MF["house"], 1e9)[0] - .05:
+                # a big building got a coarser grid than the benchmark asks for: rerun the failed directions finer
+                print(f"• refining the building grid for wind from {', '.join(f'{s:g}°' for s in bad)}…", file=sys.stderr)
+                hp2 = soft(house_pressures, MF, {s: fields[s] for s in bad}, key, 2.5) or {}
+                for s in bad:
+                    if s in hp2:
+                        r2 = trim_walls(hp2[s], lens)
+                        if cp_ok(r2):
+                            hp[s], ok[s] = r2, True
             if not all(ok.values()):
                 bad = ", ".join(f"{s:g}°" for s in sectors if not ok[s])
                 print(f"• house pressures for wind from {bad} failed the physical check; those use ASCE 7 tables", file=sys.stderr)
