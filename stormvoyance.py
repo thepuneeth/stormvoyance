@@ -1065,6 +1065,23 @@ def cp_ok(r):
     return max(abs(v) for v in w) <= 1.5 * k and -2.5 <= rf[0] - cpi <= 0.5 and rf[1] - cpi >= -4
 
 
+def trim_walls(r, lens, share=0.10):
+    """A separated corner or a short wall can read beyond the physical bound while the rest of the building is sound.
+    Such walls are set aside (shown with ASCE 7 values) as long as they make up at most `share` of the sampled perimeter;
+    a direction with more than that still fails cp_ok as a whole."""
+    cpi, g = r.get("cpi"), r.get("ref") or {}
+    if cpi is None:
+        return r
+    z0 = g.get("z0", .3)
+    k = (math.log(max(g["top"], 2 * z0) / z0) / math.log(max(g["hm"], 2 * z0) / z0)) ** 2 if g.get("top") and g.get("hm") else 1.0
+    W = r.get("walls") or []
+    bad = [i for i, v in enumerate(W) if v is not None and math.isfinite(v) and abs(v - cpi) > 1.5 * k]
+    tot = sum(lens[i] for i, v in enumerate(W) if v is not None)
+    if bad and sum(lens[i] for i in bad) <= share * tot:
+        r = dict(r, walls=[None if i in bad else v for i, v in enumerate(W)], trimmed=len(bad))
+    return r
+
+
 def leaf_state(lat, lon):
     """Current leaf-on fraction from NASA MODIS LAI (MCD15A2H, 500 m, 8-day; ~3-week latency): median of the 3x3 km
     block now vs. its July-August peak. Deciduous drag in autumn/winter is a fraction of summer's."""
@@ -1621,6 +1638,8 @@ def build(args):
                   house={k: house[k] for k in ("ring", "eave_m", "ridge_m")}, walls=house["walls"])
         hp = soft(house_pressures, MF, fields, key)
         if hp and len(hp) == len(sectors):   # per-wall Cp in sector order; the viewer picks the hour's sector
+            lens = [wl["len"] for wl in house["walls"]]
+            hp = {s: trim_walls(hp[s], lens) for s in hp}
             ok = {s: cp_ok(hp[s]) for s in sectors}   # a failed direction is null: the viewer uses ASCE 7 for it
             if not all(ok.values()):
                 bad = ", ".join(f"{s:g}°" for s in sectors if not ok[s])
@@ -1736,7 +1755,7 @@ def build(args):
                    f"{min(near_trees, key=lambda t: math.hypot(t['x'], t['y']))['gust50']:.0f} mph" if near_trees else "n/a"]]),
         dict(key="tree_hit", title=f"Tree falls on the {noun}", p=hz["tree_hit"],
              plain=f"{lvl(hz['tree_hit']).capitalize()}. {len(reach_trees)} trees are tall enough to reach the {noun}."
-                   + (f" The riskiest is {worst['h'] * 3.28:.0f} ft tall, {math.hypot(worst['x'], worst['y']) * 3.28:.0f} ft away; it would need a "
+                   + (f" The riskiest is {worst['h'] * 3.28:.0f} ft tall, {max(0, math.hypot(worst['x'], worst['y']) - house_r) * 3.28:.0f} ft from the walls; it would need a "
                       f"~{worst['crit_mph']} mph gust to {'uproot' if worst['mode'] == 'uproot' else 'snap'}." if worst and worst["p_hit"] > 0 else ""),
              how="Mechanistic tree model in the style of HWIND / ForestGALES: wind moment 0.5·ρ·Cd(u)·A·u²·z vs. stem-break "
                  "(MOR·π·DBH³/32) and uprooting (Creg·stem mass) resistance, DBH from LiDAR height and crown width (Jucker et al. 2017). "
@@ -1902,6 +1921,9 @@ FORECAST VALID 12/1800Z...DISSIPATED"""
     assert not cp_ok(dict(walls=[.8, -.5], cpi=.15, roof=[float("nan"), -1])) and not cp_ok(dict(walls=[], cpi=0, roof=[-.5, -1]))
     assert not cp_ok(dict(walls=[.8, -.5], roof=[-.5, -1]))                  # no internal pressure: cannot judge
     assert cp_ok(dict(walls=[.8, None, -.5], cpi=.15, roof=[-.6, -1.5]))    # one unsampled wall: keep the direction
+    t = trim_walls(dict(walls=[.8, -3.9, -.5, -.6], cpi=.0, roof=[-.6, -1.5]), [20, 2, 20, 20])
+    assert t["walls"][1] is None and cp_ok(t), "a short separated corner wall is set aside"
+    assert trim_walls(dict(walls=[.8, -3.9, -.5], cpi=.0, roof=[-.6, -1.5]), [20, 20, 20])["walls"][1] == -3.9, "a long bad wall still fails"
     calib.selftest()
     print("selftest ok")
 
