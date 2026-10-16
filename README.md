@@ -29,7 +29,7 @@ NHC/NWS forecasts.
 |---|---|---|
 | Surface-mounted cube, reattachment length X_R/H (10 / 16 / 20 cells per H) | 1.40 / 1.75 / 1.75 | 1.4-1.6 tunnels, 1.5-1.8 LES (AIJ / COST 732) |
 | Cube windward Cp | 0.76 / 0.80 / 0.81 | 0.7-0.8 |
-| 5-site matrix (house, landmark, tower, warehouse, low-rise) | house, landmark, tower, warehouse pass on the current engine | `validate_sites.py` |
+| 5-site matrix (house, landmark, tower, warehouse, low-rise) | 5/5 pass on the current engine | `validate_sites.py` |
 
 Tornado layer check (`python3 tornado.py`): wood-frame damage medians land at 64 / 88 / 111 / 134 mph against the EF-scale
 expected winds for one- and two-family homes (DI 2: 79 / 97 / 122 / 132 mph), within 20 %, and the swath geometry matches
