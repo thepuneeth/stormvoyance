@@ -1,10 +1,23 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import Picker, { type Site } from "./Picker";
 import Loading from "./Loading";
 import Report from "./report/Report";
 import type { Bundle } from "./report/model";
 
 type Run = { id: string; address: string };
+
+// a crash while drawing a report must not leave a blank page: say so and offer the way back
+class Guard extends Component<{ children: ReactNode; onBack: () => void }, { err: Error | null }> {
+  state = { err: null as Error | null };
+  static getDerivedStateFromError(err: Error) { return { err }; }
+  componentDidCatch(err: Error) { console.error("report crashed:", err); }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return <main className="crash"><h1>This report could not be drawn.</h1><p>{this.state.err.message}</p>
+      <div className="crash-acts"><button className="primary" onClick={() => location.reload()}>Reload</button>
+        <button className="ghost" onClick={this.props.onBack}>Back to start</button></div></main>;
+  }
+}
 const runFromUrl = () => new URLSearchParams(location.search).get("run");
 
 export default function App() {
@@ -74,6 +87,6 @@ export default function App() {
 
   if (!run) return <Picker onRun={start} onOpen={open} />;
 
-  if (state === "done" && data) return <Report key={run.id} data={data} onBack={reset} standaloneUrl={`/api/runs/${run.id}/report`} />;
+  if (state === "done" && data) return <Guard key={run.id} onBack={reset}><Report data={data} onBack={reset} standaloneUrl={`/api/runs/${run.id}/report`} /></Guard>;
   return <Loading address={run.address} log={log} state={state === "error" ? "error" : "running"} started={t0.current} onReset={reset} />;
 }

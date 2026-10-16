@@ -95,7 +95,7 @@ export function createPlan(M: Model, cv: HTMLCanvasElement, onHover: (t: Tree | 
     // same number as the hero line ("at your roof"); older bundles without it sample beside the south wall
     const h = HRS[st.idx], [hx, hy] = toS(0, 0), gHouse = h.roof?.[1] ?? M.localGust(0, -HS.W / 2 - 3, 2, st.idx);
     ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(hx, hy, 3 * dpr, 0, 7); ctx.fill();
-    pill(`${bldName(HS)} · ${Math.round(gHouse)} mph at the roof`, hx, hy - HS.W / 2 * s - 14 * dpr, mono(11), ink);
+    pill(`${bldName(HS)} · ${Math.round(gHouse)} mph at the roof`, hx, hy - Math.min(HS.W / 2 * s, 60 * dpr) - 14 * dpr, mono(11), ink);   // a huge outline keeps its label on screen
     // compass + scale bar take the 3D view's compass slot, right of the gust legend; on phones (no legend row) the right edge
     const R = 28 * dpr, r = cv.getBoundingClientRect(), lo = cv.parentElement?.querySelector(".lower")?.getBoundingClientRect();
     const row = !!lo?.width, ax = row ? (lo!.right - r.left + 10) * dpr + R : cw - 16 * dpr - R, ay = row ? (lo!.bottom - r.top) * dpr - R : ch * .56;

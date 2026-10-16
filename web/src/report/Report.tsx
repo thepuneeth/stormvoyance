@@ -47,6 +47,7 @@ export default function Report({ data, onBack, standaloneUrl }: { data: Bundle; 
   const [idx, setIdx] = useState(M.peakIdx);
   const [playing, setPlaying] = useState(false);
   const [view, setView] = useState<View>("site");
+  const [no3d, setNo3d] = useState(false);   // the browser refused WebGL: the report carries on in 2D
   const [layer, setLayer] = useState<Layers>({ flow: !!W, slice: false, risk: false, rain: true, lidar: false });
   const sliceH = 2;
   const [sheet, setSheet] = useState(false), [tab, setTab] = useState<Tab>("risks"), [openRisk, setOpenRisk] = useState<string | null>(null);
@@ -66,12 +67,16 @@ export default function Report({ data, onBack, standaloneUrl }: { data: Bundle; 
   useEffect(() => {
     if (key == null) return;
     const hover = (t: Tree | null, x: number, y: number) => setTip(t ? { t, x, y } : null);
-    const s: Scene = createSiteScene(M, { canvas: stage.current!, overlay: overlay.current!, needle: needle.current!, onHover: hover,
-      googleKey: key || undefined, googleMode: gmode, onEarth: setEarth, credits: credits.current!, gmapHost: gmap.current! }, { idx, view, layer, sliceH, houseMode });
-    scene.current = s;
     plan.current = createPlan(M, planCv.current!, hover);
     if (hasStorm) smap.current = createStormMap(M, mapCv.current!);
-    s.intro?.();                                 // once per scene instance; the scene makes it idempotent
+    try {
+      const s: Scene = createSiteScene(M, { canvas: stage.current!, overlay: overlay.current!, needle: needle.current!, onHover: hover,
+        googleKey: key || undefined, googleMode: gmode, onEarth: setEarth, credits: credits.current!, gmapHost: gmap.current! }, { idx, view, layer, sliceH, houseMode });
+      scene.current = s;
+      s.intro?.();                               // once per scene instance; the scene makes it idempotent
+    } catch (e) {                                // no WebGL (blocked after GPU resets, old hardware, locked-down browser)
+      console.warn("3D view unavailable:", e); setNo3d(true); setView("plan"); setLayer(l => ({ ...l, slice: true }));
+    }
     return () => { scene.current?.dispose(); smap.current?.dispose(); plan.current?.dispose(); scene.current = smap.current = plan.current = undefined; };
   }, [M, key]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -84,7 +89,7 @@ export default function Report({ data, onBack, standaloneUrl }: { data: Bundle; 
   const togglePlay = () => { if (!playing && idx >= NT - 1) setIdx(0); setPlaying(p => !p); };
   const scrub = (i: number) => { setPlaying(false); setIdx(clamp(i, 0, NT - 1)); };
 
-  const go = (v: View) => { setView(v); if (v === "plan" && W) setLayer(l => ({ ...l, slice: true })); };
+  const go = (v: View) => { if (no3d && (v === "site" || v === "house")) return; setView(v); if (v === "plan" && W) setLayer(l => ({ ...l, slice: true })); };
   const flyTo = (f: Focus, v: View) => { if (v === view) scene.current?.focus?.(f); else { pending.current = f; go(v); } };
   const showTree = () => { setLayer(l => ({ ...l, risk: true })); if (riskyTree >= 0) flyTo({ kind: "tree", i: riskyTree }, "site"); };
   const details = (k: string | null, t: Tab = "risks") => { setTab(t); setOpenRisk(k); setSheet(true); };
@@ -127,9 +132,10 @@ export default function Report({ data, onBack, standaloneUrl }: { data: Bundle; 
         <div ref={credits} className="credits" hidden={!earth || earth.phase === "error" || earth.phase === "map3d" || view === "storm" || view === "plan"} />
 
         <aside className="side" data-cards={cards} aria-label="Views, layers and findings">
+          {no3d && <p className="no3d glass" role="status">3D needs WebGL, which this browser has switched off. The map, timeline and risks still work; reload to try 3D again.</p>}
           <div className="nav">
             <div className="seg glass" role="group" aria-label="View">
-              {VIEWS.filter(([v]) => v !== "storm" || hasStorm).map(([v, l, s]) => v === "house" && M.D.house.cls && M.D.house.cls !== "WSF" ? [v, "Wind loads", "Loads"] as const : [v, l, s] as const).map(([v, l, s], i) =>
+              {VIEWS.filter(([v]) => (v !== "storm" || hasStorm) && !(no3d && (v === "site" || v === "house"))).map(([v, l, s]) => v === "house" && M.D.house.cls && M.D.house.cls !== "WSF" ? [v, "Wind loads", "Loads"] as const : [v, l, s] as const).map(([v, l, s], i) =>
                 <button key={v} aria-pressed={view === v} onClick={() => go(v)} title={`${l} (${i + 1})`} aria-label={l}><span className="l">{l}</span><span className="s">{s}</span></button>)}
             </div>
             <button className="round glass lay" aria-pressed={layersOpen} aria-controls="rv-layers" onClick={() => setLayersOpen(o => !o)} aria-label="Layers" title="Layers">
@@ -538,7 +544,7 @@ function Method({ M, standaloneUrl }: { M: Model; standaloneUrl: string }) {
       <h3 className="sub">Known limits</h3>
       <ul className="note">
         <li>The LiDAR is from {L ? L.year : "an older survey"}. Trees planted since then are modelled as small 6 m crowns.</li>
-        <li>Validated on the standard cube-in-boundary-layer test (AIJ / COST 732; run it with <code>--validate-cfd</code>), referenced like the experiments to the undisturbed approach flow: at 10 and 16 cells per building height the wake reattaches 1.40 and 1.38 heights downstream (wind tunnels 1.4–1.6) and the windward-face pressure coefficient is 0.85 and 0.89 (tunnels 0.7–0.8, so about 10 % high, on the safe side). On an isolated low-rise box the area-averaged windward wall comes out near +0.6, matching tunnel data, but side-wall and roof suctions read 30–50 % weaker than tunnel data: the separated shear layer at the roof edge needs a finer grid than ~14 cells per height to resolve fully.{H.cfd_grid ? ` This building got ${Math.round(H.ridge_m / H.cfd_grid.dx)} cells over its height${H.ridge_m / H.cfd_grid.dx < 10 ? ", coarser than the benchmark, so its pressures are less certain than that" : ""}.` : ""}</li>
+        <li>Validated on the standard cube-in-boundary-layer test (AIJ / COST 732; run it with <code>--validate-cfd</code>), referenced like the experiments to the undisturbed approach flow: at 10, 16 and 20 cells per building height the wake reattaches 1.40, 1.75 and 1.75 heights downstream (wind tunnels 1.4–1.6, published LES 1.5–1.8) and the windward-face pressure coefficient is 0.76, 0.80 and 0.81 (tunnels 0.7–0.8). On an isolated low-rise box the area-averaged windward wall comes out near +0.6, matching tunnel data, but side-wall and roof suctions read 30–50 % weaker than tunnel data: the separated shear layer at the roof edge needs a finer grid than ~14 cells per height to resolve fully.{H.cfd_grid ? ` This building got ${Math.round(H.ridge_m / H.cfd_grid.dx)} cells over its height${H.ridge_m / H.cfd_grid.dx < 10 ? ", coarser than the benchmark, so its pressures are less certain than that" : ""}.` : ""}</li>
         <li>The forecast calibration learns from the last {D.calib?.train_days ?? 40} days. Strong storms are rare in any 40-day window, so the far upper tail still leans on the physics and the storm-energy term.</li>
         <li>Species, decay and root damage are unknown. A hollow or leaning tree can fail far below its modelled gust.</li>
       </ul>

@@ -78,7 +78,7 @@ def geocode(q: str):
 class RunIn(BaseModel):
     address: str = Field(max_length=200)
     outline: list[tuple[float, float]] | None = Field(None, min_length=3, max_length=200)   # [[lat, lon], ...]; default: engine finds the house
-    stories: int = Field(2, ge=1, le=4)
+    stories: int | None = Field(None, ge=1, le=4)   # default: the engine measures it (LiDAR eave) or reads the map data
     roof_age: float | None = Field(None, ge=0, le=100)
 
     @field_validator("outline")
@@ -92,7 +92,9 @@ class RunIn(BaseModel):
 async def run(jid: str, body: RunIn):
     job, out = jobs[jid], RUNS / jid
     out.mkdir(exist_ok=True)
-    cmd = [sys.executable, "-I", str(HERE / "stormvoyance.py"), body.address, "-o", str(out / "report.html"), "--stories", str(body.stories)]
+    cmd = [sys.executable, "-I", str(HERE / "stormvoyance.py"), body.address, "-o", str(out / "report.html")]
+    if body.stories is not None:
+        cmd += ["--stories", str(body.stories)]
     if body.outline:
         cmd += ["--outline", json.dumps(body.outline)]
     if body.roof_age is not None:

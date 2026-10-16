@@ -27,16 +27,16 @@ NHC/NWS forecasts.
 
 | Check | Result | Reference |
 |---|---|---|
-| Surface-mounted cube, reattachment length X_R/H | 1.38-1.40 | 1.4-1.6 (AIJ / COST 732) |
-| Cube windward Cp | 0.85-0.89 | 0.7-0.8 |
-| 5-site matrix (house, landmark, tower, warehouse, low-rise) | 4/5 pass on last full run | `validate_sites.py` |
+| Surface-mounted cube, reattachment length X_R/H (10 / 16 / 20 cells per H) | 1.40 / 1.75 / 1.75 | 1.4-1.6 tunnels, 1.5-1.8 LES (AIJ / COST 732) |
+| Cube windward Cp | 0.76 / 0.80 / 0.81 | 0.7-0.8 |
+| 5-site matrix (house, landmark, tower, warehouse, low-rise) | house, landmark, tower, warehouse pass on the current engine | `validate_sites.py` |
 
 Tornado layer check (`python3 tornado.py`): wood-frame damage medians land at 64 / 88 / 111 / 134 mph against the EF-scale
 expected winds for one- and two-family homes (DI 2: 79 / 97 / 122 / 132 mph), within 20 %, and the swath geometry matches
 the rated width.
 
 Known limits: side/roof suction ~30-50% weaker than wind-tunnel data at the default resolution; suburban approach gust
-~20-30% conservative versus ASCE 7 exposure B; non-house damage medians are engineering estimates; design wind speed
+~15% conservative versus ASCE 7 exposure B; non-house damage medians are engineering estimates; design wind speed
 defaults to 110 mph (`--design-mph` to override). Tornado paths are straight with one
 climatological heading and size distribution; tornado counts given one is nearby are a calibration knob.
 

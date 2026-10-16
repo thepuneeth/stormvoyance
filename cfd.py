@@ -7,8 +7,8 @@ Two backends with the same inputs and outputs:
     it whenever it is available (best_solver()).
   * solve: the numpy reference (BGK + Smagorinsky, full-way bounce-back), used on machines without a GPU.
 Validation (benchmark_cube, AIJ / COST 732 cube in a turbulent boundary layer, referenced to the undisturbed approach
-flow from an identical empty run): GPU solver at 10 / 16 cells per H gives reattachment X_R/H 1.40 / 1.38 (tunnels
-1.4-1.6) and windward Cp(2/3 H) 0.85 / 0.89 (tunnels 0.7-0.8).
+flow from an identical empty run): GPU solver at 10 / 16 / 20 cells per H gives reattachment X_R/H 1.40 / 1.75 / 1.75
+(tunnels 1.4-1.6, published LES 1.5-1.8) and windward Cp(2/3 H) 0.76 / 0.80 / 0.81 (tunnels 0.7-0.8).
 
 D3Q19 lattice-Boltzmann, BGK collision + Smagorinsky LES closure (Hou et al. 1994),
 the same family of solver used by rapid urban-wind tools (Autodesk Forma, Orbital
@@ -235,7 +235,7 @@ def solve(solid, drag, dx, z0, U0=0.06, steps=1800, avg_from=900, Cs=0.17, nu0=6
             ui = ui.reshape(3, -1); usi = (ui * ui).sum(0)
             Xi = np.concatenate([1 - 1.5 * usi[None], ui] + [ui[a:a + 1] * ui[b:b + 1] for a, b in PAIRS])
             g[:, 0] = (Bm @ Xi).reshape(19, ny, nz)       # feq(rho = 1, ui)
-            g[:, -1] = g[:, -2]
+            g[:, -1] = g[:, -2] / np.maximum(g[:, -2].sum(0), 1e-3)   # outlet: zero gradient, held at rho = 1 (see solve_metal)
             if log and it % 300 == 0:
                 log(it, umax)
             if not np.isfinite(g[:, nx // 2].sum()):
@@ -344,7 +344,7 @@ def solve_torch(solid, drag, dx, z0, U0=0.06, steps=1800, avg_from=900, Cs=0.17,
         upr = amp * ((P_ * cb[:, None] + Q_ * sbv[:, None]).T @ cA + (Q_ * cb[:, None] - P_ * sbv[:, None]).T @ sA)
         ui_ = uin_t + sxin * upr
         g[:, 0] = feq_of(Xof(torch.ones(ny * nz, **f32), ui_)).reshape(19, ny, nz)
-        g[:, -1] = g[:, -2]
+        g[:, -1] = g[:, -2] / g[:, -2].sum(0).clamp_min(1e-3)                 # outlet: zero gradient at rho = 1
         if log and it % 300 == 0:
             log(it, float(sp.max()))
         if it % 1000 == 999 and not bool(torch.isfinite(g[:, nx // 2]).all()):
@@ -496,7 +496,10 @@ def solve_metal(solid, drag, dx, z0, U0=0.06, steps=1800, avg_from=900, Cs=0.17,
         cb, sbv = torch.cos(dph * it), torch.sin(dph * it)
         upr = amp * ((P_ * cb[:, None] + Q_ * sbv[:, None]).T @ cA + (Q_ * cb[:, None] - P_ * sbv[:, None]).T @ sA)
         g[:, 0] = feq(uin_t + sxin * upr)                                    # inlet
-        g[:, -1] = g[:, -2]                                                  # outlet: zero gradient
+        # outlet: zero gradient in velocity, density held at the inlet's rho = 1. A plain copy lets mass pile up over long
+        # runs (with an equilibrium inlet at rho = 1 the rising back-pressure then throttles the inflow: one 10,800-step
+        # downtown run lost 60 % of its wind); rescaling the copied populations fixes the level and keeps the velocity
+        g[:, -1] = g[:, -2] / g[:, -2].sum(0).clamp_min(1e-3)
         if log and it % 300 == 0:
             log(it, 0.0)
         if it % 1000 == 999 and not bool(torch.isfinite(g[:, nx // 2]).all()):

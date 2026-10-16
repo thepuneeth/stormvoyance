@@ -34,7 +34,7 @@ HERE = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------- calibration knobs
 # Every number here is a published-ish central value; tune per region / new science.
-ENGINE_VERSION = 4   # bump when reports change meaning; the start page lists only runs from the current engine
+ENGINE_VERSION = 5   # bump when reports change meaning; the start page lists only runs from the current engine
 K = dict(
     members=1000,
     # NHC official Atlantic 5-yr mean track error (n mi) by lead hour, ~2020-2024 verification
@@ -830,7 +830,7 @@ def macdonald_z0(h, dx, upwind):
 def _sector(args):
     """One wind direction: voxelise the site in a wind-aligned lattice, run LBM-LES, resample to the world grid."""
     import cfd
-    th, M, dx, steps, out_half, out_nz = args
+    th, M, dx, steps, out_half, out_nz, *seed = args
     E, Hb, Hc, Hbase, R = M["E"], M["Hb"], M["Hc"], M["Hbase"], M["R"]
     half = R / math.sqrt(2) - 2; n = int(2 * half / dx) // 2 * 2
     a = math.radians(th + 180)                                    # compass direction the wind blows toward
@@ -858,7 +858,7 @@ def _sector(args):
     canopy = (Z[None, None, :] > (e + hbs)[..., None]) & (Z[None, None, :] < (e + hc)[..., None]) & ~solid
     drag = np.where(canopy, K["tree_Cd"] * lad[..., None], 0).astype(np.float32)
     steps = max(steps, int(4 * n / 0.06))           # >= 4 flow-throughs at the lattice inflow speed; mean over the last 55 %
-    mu, sig = cfd.best_solver()(solid, drag, dx, z0, steps=steps, avg_from=int(steps * 0.45),
+    mu, sig = cfd.best_solver()(solid, drag, dx, z0, steps=steps, avg_from=int(steps * 0.45), seed=seed[0] if seed else 0,
                                 **_wall_model(Z[None, None, :] < e[..., None], 0.05))
     # resample to a north-up world grid centred on the house
     nw = int(2 * out_half / dx); xs = (np.arange(nw) - nw / 2 + 0.5) * dx
@@ -917,7 +917,7 @@ def wall_list(ring):
                         len=round(L, 2), fb=round(math.degrees(math.atan2(nx, ny)) % 360, 1)))
     return out
 
-HOUSE_CFD_VERSION = "sw11"   # bump when the nested-pressure method changes: cached results are then recomputed
+HOUSE_CFD_VERSION = "sw12"   # bump when the nested-pressure method changes: cached results are then recomputed
 
 def _house_sector(args):
     """Fine LBM-LES box around the building, nested in the coarse run for the same direction: the coarse mean wind and
@@ -1083,22 +1083,42 @@ def leaf_state(lat, lon):
     when, now = recent[-1]
     return dict(factor=round(min(1.0, now / peak), 2), lai_now=round(now, 2), lai_peak=round(peak, 2), date=when)
 
+def field_ok(r):
+    """Physical check on a coarse field: above the roofs the wind must still be the approach flow. A run that went
+    unstable or stalled comes out uniformly slow. Over 89 cached site runs the top output level carried 0.35-1.3 of the
+    log-law speed for the inflow roughness (median 1.03); the three broken ones 0.10-0.17. The bar sits between."""
+    import cfd
+    top = (r["u"].shape[3] - 0.5) * r["dx"]
+    return float(np.linalg.norm(r["u"][..., -1], axis=0).mean()) >= 0.25 * float(cfd.log_profile(np.array(top), r["z0"]))
+
 def wind_fields(M, sectors, key, dx=2.5, steps=1900, out_half=140, out_nz=14):
     """Run (or load cached) CFD for each wind direction. Results depend only on the site, not the forecast,
-    so they are cached and reused on every forecast update."""
+    so they are cached and reused on every forecast update. A direction that fails field_ok is rerun once with new
+    synthetic turbulence; if it fails again it is left out (members use the nearest good direction)."""
     todo, out = [], {}
+    path = lambda th: CACHE / "cfd" / f"{key}-{th:05.1f}-{dx}-{steps}.npz"
     for th in sectors:
-        p = CACHE / "cfd" / f"{key}-{th:05.1f}-{dx}-{steps}.npz"
-        if p.exists():
-            z = np.load(p, allow_pickle=True); out[th] = {k: z[k].item() if z[k].ndim == 0 else z[k] for k in z.files}
-        else:
-            todo.append(th)
-    if todo:
-        print(f"  CFD: {len(todo)} wind direction(s), LBM-LES, ~{2 * steps // 1000 + 1} min each (parallel)…", file=sys.stderr)
+        if path(th).exists():
+            z = np.load(path(th), allow_pickle=True); r = {k: z[k].item() if z[k].ndim == 0 else z[k] for k in z.files}
+            if field_ok(r):
+                out[th] = r; continue
+            for f in path(th).parent.glob(f"{key}-house-{th:05.1f}-*"):   # nested runs driven by the bad field go too
+                f.unlink()
+        todo.append(th)
+    for attempt in (0, 1):
+        if not todo:
+            break
+        print(f"  CFD: {len(todo)} wind direction(s), LBM-LES, ~{2 * steps // 1000 + 1} min each…", file=sys.stderr)
         with cf.ProcessPoolExecutor(_workers(len(todo))) as ex:
-            for th, r in zip(todo, ex.map(_sector, [(th, M, dx, steps, out_half, out_nz) for th in todo])):
-                p = CACHE / "cfd" / f"{key}-{th:05.1f}-{dx}-{steps}.npz"; p.parent.mkdir(parents=True, exist_ok=True)
-                np.savez_compressed(p, **r); out[th] = r
+            res = list(ex.map(_sector, [(th, M, dx, steps, out_half, out_nz, attempt) for th in todo]))
+        todo = []
+        for th, r in zip([r["dir"] for r in res], res):
+            if field_ok(r):
+                path(th).parent.mkdir(parents=True, exist_ok=True); np.savez_compressed(path(th), **r); out[th] = r
+            else:
+                todo.append(th)
+    for th in todo:
+        print(f"  ! CFD for wind from {th:g}° failed its check twice; members from there use the nearest good direction", file=sys.stderr)
     return out
 
 def probe(F, x, y, z_agl, E, R):
@@ -1580,13 +1600,16 @@ def build(args):
     if leaf:
         print(f"• leaf state (NASA MODIS {leaf['date']}): LAI {leaf['lai_now']} vs summer {leaf['lai_peak']} -> canopy drag x{K['leaf']:.2f}", file=sys.stderr)
     M = dict(E=E.astype(np.float32), Hb=Hb, Hc=Hc.astype(np.float32), Hbase=Hbase.astype(np.float32), R=R, lai=lai)
-    key = hashlib.sha1(f"{clat:.5f},{clon:.5f},{R},{lidar_meta},{lai},cfd3,{house['ring']},{float(Hb.sum()):.0f}".encode()).hexdigest()[:12]
+    key = hashlib.sha1(f"{clat:.5f},{clon:.5f},{R},{lidar_meta},{lai},cfd4,{house['ring']},{float(Hb.sum()):.0f}".encode()).hexdigest()[:12]
     # the coarse field must hold the nested box and the tallest building near it
     out_half = int(min(R / math.sqrt(2) - 4, max(140, nested_box(house, 1e9)[1] + 10)))
     out_nz = int(max(14, math.ceil((max(ridge, float(np.percentile(Hb[Hb > 0], 99)) if (Hb > 0).any() else 0) + 25) / 2.5)))
     if not args.no_cfd:
         print(f"• wind simulation (lattice-Boltzmann CFD, {len(sectors)} wind directions)…", file=sys.stderr)
     fields = {} if args.no_cfd else (soft(wind_fields, M, sectors, key, steps=args.cfd_steps, out_half=out_half, out_nz=out_nz) or {})
+    if fields:
+        sectors = [s_ for s_ in sectors if s_ in fields]
+        hour_sector = [min(range(len(sectors)), key=lambda i: ang(sectors[i], d or sectors[0])) for d in d_nws]
     local = None
     house["walls"] = wall_list(house["ring"])
     if len(fields) == len(sectors):
@@ -1836,6 +1859,9 @@ FORECAST VALID 12/1800Z...DISSIPATED"""
     secs = pick_sectors(s2["_dir"], s2["_gust"], 6)
     assert 2 <= len(secs) <= 6 and 0.0 in secs, secs
     assert pick_sectors(np.full((50, 4), 200.0), np.full((50, 4), 30.0), 6) == [202.5]
+    import cfd
+    good = np.zeros((3, 8, 8, 20), np.float32); good[0] = cfd.log_profile((np.arange(20) + .5) * 2.5, .5)
+    assert field_ok(dict(u=good, dx=2.5, z0=.5)) and not field_ok(dict(u=good * .15, dx=2.5, z0=.5)), "stalled CFD field must fail"
     tornado.selftest()
     # tree model: calibrated reference tree fails at its reference gust; a slender tree of the same height is weaker
     calibrate_trees(); h, cw, mph = K["tree_ref"]
