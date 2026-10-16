@@ -184,7 +184,14 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
     const box = (b: { cx: number; cy: number; L: number; W: number; heading: number }, h: number) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(b.L, h + 1, b.W), mat); m.position.set(b.cx, terrH(b.cx, b.cy) + h / 2 - .5, -b.cy); m.rotation.y = (90 - b.heading) * Math.PI / 180; m.renderOrder = -1; g.add(m);
     };
-    box(HS, (HS.eave_m + HS.ridge_m) / 2); for (const b of D.buildings) box(b, b.h || 7);
+    // the target uses its true outline: a big L- or U-shaped building's bounding box would swallow every line near it
+    const ring = HS.ring as [number, number][] | undefined, hh = (HS.eave_m + HS.ridge_m) / 2;
+    if (ring && ring.length > 2) {
+      const geo = new THREE.ExtrudeGeometry(new THREE.Shape(ring.map(([x, y]) => new THREE.Vector2(x, y))), { depth: hh + 1, bevelEnabled: false });
+      geo.rotateX(-Math.PI / 2);                       // shape (x, north) extruded up: (x, y, z) -> (x, z, -y)
+      const m = new THREE.Mesh(geo, mat); m.position.y = terrH(0, 0) - .5; m.renderOrder = -1; g.add(m);
+    } else box(HS, hh);
+    for (const b of D.buildings) box(b, b.h || 7);
     const tr = D.trees.filter((t: Tree) => t.h >= 4), im = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 12, 8), mat, tr.length), m4 = new THREE.Matrix4();
     tr.forEach((t: Tree, k: number) => { const r = t.cw / 2 * .8; m4.compose(new THREE.Vector3(t.x, terrH(t.x, t.y) + t.h - r, -t.y), q.setFromAxisAngle(y, 0), new THREE.Vector3(r, Math.min(r, t.h / 2), r)); im.setMatrixAt(k, m4); });
     im.renderOrder = -1; g.add(im); return g;
@@ -386,10 +393,16 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   }
 
   // camera: frame the lot with the peak-hour wind coming from behind the viewer's left shoulder
-  const pd = (HRS[M.peakIdx].dir || 200) * Math.PI / 180, hk = Math.max(1, Math.hypot(HS.L, HS.W) / 28);   // hk: big buildings need a wider house view
+  const pd = (HRS[M.peakIdx].dir || 200) * Math.PI / 180;
+  // the house view frames the outline itself: its centre (the address point can sit off-centre on a big building) and a
+  // distance that grows with its size, close for a house, a block or so back for a station or a warehouse
+  const rg = (HS.ring as [number, number][] | undefined) ?? [[-HS.L / 2, -HS.W / 2], [HS.L / 2, HS.W / 2]];
+  const bx = (Math.min(...rg.map(p => p[0])) + Math.max(...rg.map(p => p[0]))) / 2, by = (Math.min(...rg.map(p => p[1])) + Math.max(...rg.map(p => p[1]))) / 2;
+  const diag = Math.hypot(Math.max(...rg.map(p => p[0])) - Math.min(...rg.map(p => p[0])), Math.max(...rg.map(p => p[1])) - Math.min(...rg.map(p => p[1])));
+  const hd = Math.max(52, 30 + diag * .95), hz = Math.max(30, hd * .58);
   const cams: Record<"site" | "house", Pose> = {
     site: [P3(Math.sin(pd + .55) * 220, Math.cos(pd + .55) * 220, 140), P3(0, 0, 2)],
-    house: [P3(Math.sin(pd + .7) * 52 * hk, Math.cos(pd + .7) * 52 * hk, 30 * hk), P3(0, 0, 4)],
+    house: [P3(bx + Math.sin(pd + .7) * hd, by + Math.cos(pd + .7) * hd, hz), P3(bx, by, Math.min(4, HS.eave_m * .4) + (diag > 60 ? HS.eave_m * .3 : 0))],
   };
   // a tree, seen from beyond it so the house sits behind it in frame; if a building would block that view, the camera
   // swings round the tree to the nearest bearing with a clear line of sight
