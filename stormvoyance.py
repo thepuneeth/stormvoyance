@@ -367,9 +367,10 @@ def river(lat, lon):
     fc = [p["primary"] for p in (sf.get("forecast") or {}).get("data", []) if p["primary"] > -900]
     obs = [p["primary"] for p in sf["observed"]["data"] if p["primary"] > -900]
     cats = meta.get("flood", {}).get("categories", {})
+    lvl = lambda k: (lambda v: v if v is not None and v > -900 else None)((cats.get(k) or {}).get("stage"))   # -9999 = not defined
     return dict(lid=g["lid"], name=g["name"], dist_mi=round(float(hav_km(lat, lon, g["latitude"], g["longitude"])) / 1.609, 1),
                 lat=g["latitude"], lon=g["longitude"], stage=obs[-1] if obs else None, fcst_max=max(fc) if fc else None,
-                minor=(cats.get("minor") or {}).get("stage"), action=(cats.get("action") or {}).get("stage"),
+                minor=lvl("minor"), action=lvl("action"),
                 units=sf["observed"].get("primaryUnits", "ft"))
 
 # ---------------------------------------------------------------- buildings
@@ -557,6 +558,8 @@ def classify(b):
         cls = "WMF"
     else:
         cls = "MLR"
+    if cls == "MBI" and not lv:
+        stories = 1                                # high-bay industrial: one tall storey, not eave / 3.4 m
     shape = b["tags"].get("roof:shape")
     flat = b["flat"] if b.get("flat") is not None else (shape == "flat" if shape else cls not in ("WSF", "WMF"))
     return dict(cls=cls, label=CLASSES[cls], stories=stories, flat=bool(flat), osm_type=t if t != "yes" else None)
@@ -588,7 +591,8 @@ def measure_buildings(blds, P, ground, R):
         v = v[v > 1.5]
         if len(v) >= max(8, .4 * core[0].size):
             p10, p90, p95 = np.percentile(v, [10, 90, 95])
-            b.update(h=float(p95), eave=float(p10), flat=bool(p90 - p10 < 1.5), h_src="LiDAR")
+            # flat or low-slope: a 1/4:12 (2 %) drainage slope still rises ~1 % of the span, metres on a big warehouse
+            b.update(h=float(p95), eave=float(p10), flat=bool(p90 - p10 < max(1.5, .012 * b["W"])), h_src="LiDAR")
     return ndsm
 
 def _cells(b, R):
@@ -1359,7 +1363,7 @@ def simulate(lat, lon, times, w, track, site, house, trees, rng, local=None):
     p_flash = (hr_max > 1.0) | (r3 > 2.0)
     rv = site.get("river")
     p_creek = None
-    if rv and rv.get("minor") and rv.get("stage") is not None:
+    if rv and rv.get("minor") is not None and rv["minor"] > -900 and rv.get("stage") is not None:   # also guards older caches
         peak_stage = (rv["fcst_max"] if rv["fcst_max"] is not None else rv["stage"])
         sd = 0.5 + 0.2 * max(0, peak_stage - rv["stage"])
         p_creek = float(1 - ndtr((rv["minor"] - peak_stage) / sd))

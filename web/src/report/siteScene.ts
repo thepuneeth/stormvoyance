@@ -400,8 +400,9 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   const bx = (Math.min(...rg.map(p => p[0])) + Math.max(...rg.map(p => p[0]))) / 2, by = (Math.min(...rg.map(p => p[1])) + Math.max(...rg.map(p => p[1]))) / 2;
   const diag = Math.hypot(Math.max(...rg.map(p => p[0])) - Math.min(...rg.map(p => p[0])), Math.max(...rg.map(p => p[1])) - Math.min(...rg.map(p => p[1])));
   const hd = Math.max(52, 30 + diag * .95), hz = Math.max(30, hd * .58);
+  const sd = Math.max(220, diag * 1.15), ks = sd > 220 ? 1 : 0;   // the lot view backs off for a building bigger than the lot
   const cams: Record<"site" | "house", Pose> = {
-    site: [P3(Math.sin(pd + .55) * 220, Math.cos(pd + .55) * 220, 140), P3(0, 0, 2)],
+    site: [P3(bx + Math.sin(pd + .55) * sd, by + Math.cos(pd + .55) * sd, sd * .64), P3(bx * ks, by * ks, 2)],
     house: [P3(bx + Math.sin(pd + .7) * hd, by + Math.cos(pd + .7) * hd, hz), P3(bx, by, Math.min(4, HS.eave_m * .4) + (diag > 60 ? HS.eave_m * .3 : 0))],
   };
   // a tree, seen from beyond it so the house sits behind it in frame; if a building would block that view, the camera
