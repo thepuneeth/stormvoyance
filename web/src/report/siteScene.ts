@@ -14,7 +14,7 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { N8AOPass } from "n8ao";
-import { clamp, css, gustRatio, rampLin, type Model, type Tree, bldName } from "./model";
+import { clamp, css, gustRatio, rampLin, type Model, type Tree, bldName, wheelZoom } from "./model";
 import { boltPath, buildGrass, buildHouses, buildRain, buildSky, buildTrees, groundDetail, halftoneEdge, inRect, loadSat, overcastEnv, type Rect } from "./realism";
 import { createEarth, type EarthStatus, type HouseMode } from "./earth";
 import { createMap3d } from "./map3d";
@@ -46,7 +46,14 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   R.info.autoReset = false;
   const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, 1, 1, 3000);
   const ctl = new OrbitControls(cam, cv); ctl.enableDamping = true; ctl.maxPolarAngle = Math.PI * .47; ctl.minDistance = 18; ctl.maxDistance = Math.max(560, Math.hypot(M.D.house.L, M.D.house.W) * 2.6);
-  ctl.zoomToCursor = true; ctl.dampingFactor = .08;   // the report is a fixed full-screen page: the wheel has nothing else to scroll
+  ctl.dampingFactor = .08; ctl.enableZoom = false;
+  // our own wheel zoom (shared sense with the Google map and 2D plan): straight in/out along the view, target fixed
+  const onWheel = (e: WheelEvent) => {
+    if (g3d) return; e.preventDefault(); flight = null;
+    const d = tmp.subVectors(cam.position, ctl.target), r = clamp(d.length() * wheelZoom(e), ctl.minDistance, ctl.maxDistance);
+    cam.position.copy(ctl.target).add(d.setLength(r)); dirty = true;
+  };
+  cv.addEventListener("wheel", onWheel, { passive: false });
   const P3 = (x: number, y: number, z: number) => new THREE.Vector3(x, z, -y);   // world (east, north, up) -> three (x, up, -north)
   const TB = HALF * .95;   // orbit target bounds: anywhere over the modelled ground, edge trees included
 
@@ -590,7 +597,7 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
     dispose() {
       dead = true; stream.dispose(); rain.dispose(); sky.dispose(); earth?.dispose(); g3d?.dispose(); cancelAnimationFrame(raf); ro.disconnect();
       if (o.gmapHost) { o.gmapHost.style.filter = ""; o.gmapHost.removeEventListener("pointermove", onMove); o.gmapHost.removeEventListener("pointerleave", onLeave); }
-      cv.removeEventListener("pointermove", onMove); cv.removeEventListener("pointerleave", onLeave);
+      cv.removeEventListener("wheel", onWheel); cv.removeEventListener("pointermove", onMove); cv.removeEventListener("pointerleave", onLeave);
       ctl.removeEventListener("start", onStart); ctl.removeEventListener("change", onChange);
       tags.forEach(t => t.el.remove()); ctl.dispose(); boltGeo.dispose();
       sc.traverse(obj => { const m = obj as THREE.Mesh; m.geometry?.dispose(); [m.material].flat().forEach(x => (x as THREE.Material | undefined)?.dispose()); });

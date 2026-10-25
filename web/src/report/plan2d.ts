@@ -1,7 +1,7 @@
 // 2D top-down view of the simulation: satellite image, CFD gust map at a chosen height, animated wind particles,
 // footprints and LiDAR trees (risk-coloured). North up; wheel to zoom, drag to pan. Drawn in the report's dark
 // "halftone storm" style: greyed imagery, hairlines, dotted crowns, mono labels; colour only for gust and risk.
-import { clamp, css, gustRatio, ramp, type Model, type Tree, bldName } from "./model";
+import { clamp, css, gustRatio, ramp, type Model, type Tree, bldName, wheelZoom } from "./model";
 import type { Layers } from "./siteScene";
 
 type St = { idx: number; layer: Layers; sliceH: number; active: boolean };
@@ -126,9 +126,7 @@ export function createPlan(M: Model, cv: HTMLCanvasElement, onHover: (t: Tree | 
   // zoom / pan / hover
   let drag: [number, number] | null = null;
   const onWheel = (e: WheelEvent) => {
-    e.preventDefault(); const r = cv.getBoundingClientRect(), [wx, wy] = toW((e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr);
-    zoom = clamp(zoom * Math.exp(-e.deltaY * .0015), 1, 8); const [nx, ny] = toW((e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr);
-    panX += wx - nx; panY += wy - ny; tctx.clearRect(0, 0, cw, ch);
+    e.preventDefault(); zoom = clamp(zoom / wheelZoom(e), 1, 8); tctx.clearRect(0, 0, cw, ch);
   };
   const onDown = (e: PointerEvent) => { drag = [e.clientX, e.clientY]; cv.setPointerCapture(e.pointerId); };
   const onUp = () => { drag = null; };

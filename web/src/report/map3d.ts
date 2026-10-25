@@ -1,7 +1,7 @@
 // Google's own photorealistic 3D map (Maps JavaScript API <gmp-map-3d>; works on the free Maps Demo Key) as a
 // background layer. Our three.js canvas sits on top, transparent, and copies Google's camera every frame.
 import * as THREE from "three";
-import type { Model } from "./model";
+import { wheelZoom, type Model } from "./model";
 
 type G = { maps: { importLibrary(n: string): Promise<Record<string, unknown>> } };
 type LLA = { lat: number; lng: number; altitude: number };
@@ -42,6 +42,14 @@ export async function createMap3d(M: Model, host: HTMLElement, key: string, onFa
   const STOP = ["pointerdown", "wheel", "touchstart", "keydown"], stop = () => { cancelAnimationFrame(anim); anim = 0; };
   const press = (e: PointerEvent) => { down = e.buttons ? 1 : 0; still = 0; };
   for (const e of STOP) host.addEventListener(e, stop, { capture: true, passive: true });
+  // our wheel zoom instead of Google's (which zooms toward the cursor and slides the view): range only, centre fixed,
+  // same sense as the other views. Captured on the host so Google's own handler never sees it.
+  const wheel = (e: WheelEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    if (!((map.range ?? 0) > 1)) repivot(P, F);
+    map.range = THREE.MathUtils.clamp((map.range ?? 300) * wheelZoom(e), 20, RMAX);
+  };
+  host.addEventListener("wheel", wheel, { capture: true, passive: false });
   host.addEventListener("pointerdown", press, { capture: true, passive: true });
   for (const e of ["pointerup", "pointercancel"] as const) addEventListener(e, press, { capture: true, passive: true });   // a release can land off the map
   // Google sometimes moves the pivot onto the camera itself (range 0, seen after resizes, tab switches and its own
@@ -96,7 +104,7 @@ export async function createMap3d(M: Model, host: HTMLElement, key: string, onFa
       anim = requestAnimationFrame(step);
     },
     dispose() {
-      cancelAnimationFrame(anim); for (const e of STOP) host.removeEventListener(e, stop, true);
+      cancelAnimationFrame(anim); for (const e of STOP) host.removeEventListener(e, stop, true); host.removeEventListener("wheel", wheel, true);
       host.removeEventListener("pointerdown", press, true); for (const e of ["pointerup", "pointercancel"] as const) removeEventListener(e, press, true); map.remove();
     },
   };

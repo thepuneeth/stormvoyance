@@ -139,3 +139,10 @@ export function reportSelfTest(): true {
   if (riskiestTree([{ p_hit: 0, p_fail: .2 }, { p_hit: .01, p_fail: .01 }, { p_hit: .01, p_fail: .05 }]) !== 2 || riskiestTree([]) !== -1) throw new Error("riskiestTree");
   return true;
 }
+
+// wheel -> camera-distance multiplier, same in every view. Scroll down (or a two-finger swipe down) moves in;
+// a trackpad pinch (ctrlKey wheel) keeps its natural sense. Zooms about the view centre, so nothing slides sideways.
+export function wheelZoom(e: WheelEvent): number {
+  const d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+  return e.ctrlKey ? Math.exp(Math.max(-.5, Math.min(.5, d * .01))) : Math.exp(-Math.max(-.5, Math.min(.5, d * .0015)));
+}
