@@ -45,9 +45,8 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   R.shadowMap.enabled = true; R.shadowMap.type = THREE.PCFShadowMap; R.shadowMap.autoUpdate = false; R.shadowMap.needsUpdate = true;
   R.info.autoReset = false;
   const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera(40, 1, 1, 3000);
-  const ctl = new OrbitControls(cam, cv); ctl.enableDamping = true; ctl.maxPolarAngle = Math.PI * .47; ctl.minDistance = 18; ctl.maxDistance = Math.max(560, Math.hypot(M.D.house.L, M.D.house.W) * 2.6); ctl.enableZoom = false;
-  const engage = () => { ctl.enableZoom = true; };                        // no scroll hijack until the user engages the scene
-  cv.addEventListener("pointerdown", engage);
+  const ctl = new OrbitControls(cam, cv); ctl.enableDamping = true; ctl.maxPolarAngle = Math.PI * .47; ctl.minDistance = 18; ctl.maxDistance = Math.max(560, Math.hypot(M.D.house.L, M.D.house.W) * 2.6);
+  ctl.zoomToCursor = true; ctl.dampingFactor = .08;   // the report is a fixed full-screen page: the wheel has nothing else to scroll
   const P3 = (x: number, y: number, z: number) => new THREE.Vector3(x, z, -y);   // world (east, north, up) -> three (x, up, -north)
   const TB = HALF * .95;   // orbit target bounds: anywhere over the modelled ground, edge trees included
 
@@ -473,7 +472,9 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   const endWait = () => { introWait = 0; ctl.autoRotate = false; };
   function startIntroFlight() { endWait(); flyTo(cams.site, 3.8); reveal(3.3); }
   // any user grab ends a flight (and the intro) where the camera is
-  const onStart = () => { flight = null; endWait(); reveal(1.2); };
+  let dragging = false;
+  const onStart = () => { flight = null; endWait(); reveal(1.2); dragging = true; };
+  ctl.addEventListener("end", () => { dragging = false; });
   const onChange = () => { dirty = true; };
   ctl.addEventListener("start", onStart); ctl.addEventListener("change", onChange);
 
@@ -484,7 +485,13 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
 
   // hover: LiDAR trees
   const big = D.trees.filter((t: Tree) => t.h >= 8), v3 = new THREE.Vector3();
+  // throttled to one pick per frame and skipped mid-drag: each tooltip update re-renders the React report
+  let hovQ: PointerEvent | null = null, hovRaf = 0;
   const onMove = (e: PointerEvent) => {
+    if (e.buttons) { hovQ = null; o.onHover(null, 0, 0); return; }
+    hovQ = e; hovRaf ||= requestAnimationFrame(() => { hovRaf = 0; if (hovQ) pick(hovQ); hovQ = null; });
+  };
+  const pick = (e: PointerEvent) => {
     if (st.view === "storm") return; const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
     let best: Tree | null = null, bd = 20;
     for (const t of big) {
@@ -516,7 +523,7 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
   let ema = 16.7, prAt = 0, restoredAt = -1e9, prLocked = false, frames = 0;
   function setPR(p: number) { pr = p; prAt = performance.now(); ema = 16.7; R.setPixelRatio(p); composer.setPixelRatio(p); resize(); log(`pixel ratio -> ${p}`); }
   function adapt(now: number, gap: number) {
-    if (++frames < 90 || gap > 250) return;   // skip shader-compile warm-up and stalls (tab switches, builds)
+    if (++frames < 90 || gap > 250 || dragging) return;   // skip shader-compile warm-up and stalls (tab switches, builds)
     ema += (Math.min(gap, 60) - ema) * .05;
     if (pr > 1 && ema > 22 && now - prAt > 1500) { if (now - restoredAt < 9000) prLocked = true; setPR(Math.max(1, pr - .5)); }
     else if (!prLocked && pr < PRMAX && ema < 13 && now - prAt > 5000) { restoredAt = now; setPR(Math.min(PRMAX, pr + .5)); }
@@ -583,7 +590,7 @@ export function createSiteScene(M: Model, o: Opts, init: SceneState) {
     dispose() {
       dead = true; stream.dispose(); rain.dispose(); sky.dispose(); earth?.dispose(); g3d?.dispose(); cancelAnimationFrame(raf); ro.disconnect();
       if (o.gmapHost) { o.gmapHost.style.filter = ""; o.gmapHost.removeEventListener("pointermove", onMove); o.gmapHost.removeEventListener("pointerleave", onLeave); }
-      cv.removeEventListener("pointerdown", engage); cv.removeEventListener("pointermove", onMove); cv.removeEventListener("pointerleave", onLeave);
+      cv.removeEventListener("pointermove", onMove); cv.removeEventListener("pointerleave", onLeave);
       ctl.removeEventListener("start", onStart); ctl.removeEventListener("change", onChange);
       tags.forEach(t => t.el.remove()); ctl.dispose(); boltGeo.dispose();
       sc.traverse(obj => { const m = obj as THREE.Mesh; m.geometry?.dispose(); [m.material].flat().forEach(x => (x as THREE.Material | undefined)?.dispose()); });

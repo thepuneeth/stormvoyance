@@ -56,17 +56,21 @@ export async function createMap3d(M: Model, host: HTMLElement, key: string, onFa
     s = THREE.MathUtils.clamp(s, 20, RMAX); const g = T.copy(P).addScaledVector(F, s);
     Object.assign(map, { center: { lat: lat0 - g.z / mN, lng: lon0 + g.x / mE, altitude: g0 + g.y }, range: s });
   }
-  return {
+  const api = {
     sync(cam: THREE.PerspectiveCamera) {
       const c = map.center; if (!c) return;
-      if ((map.range ?? 0) > RMAX) map.range = RMAX;   // backstop: bounds/maxAltitude alone still let the wheel pull far back
       const t = (map.tilt ?? 0) * Math.PI / 180, h = (map.heading ?? 0) * Math.PI / 180, r = map.range ?? 300;
       // view direction from heading/tilt (three: x east, y up, z south); camera sits r behind the centre along it
       F.set(Math.sin(t) * Math.sin(h), -Math.cos(t), -Math.sin(t) * Math.cos(h));
       P.copy(enu(c)).addScaledVector(F, -r);
       const pose = `${c.lat},${c.lng},${c.altitude},${r},${map.tilt},${map.heading}`;
       still = pose === last ? still + 1 : 0; last = pose;
-      if (r < 1 && !down && !anim && still > 8) { repivot(P, F); still = 0; }   // ~150 ms without motion (Google's glide has ended)
+      // once the view has settled (~150 ms still, Google's glide over): re-pivot, and pull back a range the wheel took past RMAX
+      // (bounds/maxAltitude alone let it at steep tilts). Never mid-gesture: writing while Google animates fights it and stutters.
+      if (!down && !anim && still > 8) {
+        if (r < 1) { repivot(P, F); still = 0; }
+        else if (r > RMAX) { const g = P.clone().addScaledVector(F, r); api.fly(g.clone().addScaledVector(F, -RMAX), g, .35); still = 0; }
+      }
       cam.position.copy(P); cam.up.set(0, 1, 0); cam.lookAt(T.copy(P).add(F));
       const fov = map.fov ?? 35; if (cam.fov !== fov) { cam.fov = fov; cam.updateProjectionMatrix(); }
     },
@@ -96,4 +100,5 @@ export async function createMap3d(M: Model, host: HTMLElement, key: string, onFa
       host.removeEventListener("pointerdown", press, true); for (const e of ["pointerup", "pointercancel"] as const) removeEventListener(e, press, true); map.remove();
     },
   };
+  return api;
 }
