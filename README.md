@@ -48,6 +48,13 @@ cp .env.example .env            # optional Google Maps key for 3D tiles
 .venv/bin/python stormvoyance.py "3764 Elvis Presley Blvd, Memphis, TN 38116"
 ```
 
+Replay a past storm (archived GFS/HRRR forecasts, NWS warnings and SPC outlooks; no live storm needed):
+
+```bash
+.venv/bin/python stormvoyance.py "Nashville, TN" --replay 2023-03-03T06     # Middle TN high-wind + tornado day
+STORMVOYANCE_REPLAY=2023-03-03T06 .venv/bin/uvicorn server:app --port 8000   # every web run replays it
+```
+
 Web app:
 
 ```bash

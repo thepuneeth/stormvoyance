@@ -47,17 +47,17 @@ EF_DI2 = [65, 79, 97, 122, 132]                    # EF-scale DI 2 expected wind
                                                    # large roof sections gone, exterior walls collapse
 
 
-def spc_outlooks(get, lat, lon, t0, t1):
-    """SPC day 1-2 tornado probabilities at a point for outlooks that overlap [t0, t1]. get(url) returns parsed JSON."""
+def spc_outlooks(get, lat, lon, t0, t1, bases=None):
+    """SPC day 1-2 tornado probabilities at a point for outlooks that overlap [t0, t1]. get(url) returns parsed JSON.
+    bases: replay mode's archived outlook URL prefixes (one per day) in place of the live day 1 / day 2."""
     out = []
-    for day in (1, 2):
-        base = f"https://www.spc.noaa.gov/products/outlook/day{day}otlk_"
+    for day, base in enumerate(bases or [f"https://www.spc.noaa.gov/products/outlook/day{d}otlk_" for d in (1, 2)], 1):
         torn = get(base + "torn.lyr.geojson")
         feats = torn.get("features") or []
         if not feats:
             continue
         pr = feats[0]["properties"]
-        valid, expire = _iso(pr.get("VALID_ISO")), _iso(pr.get("EXPIRE_ISO"))
+        valid, expire = _iso(pr.get("VALID_ISO") or pr.get("VALID")), _iso(pr.get("EXPIRE_ISO") or pr.get("EXPIRE"))
         if valid and expire and (expire <= t0 or valid >= t1):
             continue
         p = max([_num(f["properties"].get("LABEL")) for f in feats if _hit(f.get("geometry"), lon, lat)], default=0.0)
@@ -69,18 +69,20 @@ def spc_outlooks(get, lat, lon, t0, t1):
                 continue
             for f in g.get("features") or []:
                 fp = f["properties"]
-                if _iso(fp.get("VALID_ISO")) != valid or not _hit(f.get("geometry"), lon, lat):
+                if _iso(fp.get("VALID_ISO") or fp.get("VALID")) != valid or not _hit(f.get("geometry"), lon, lat):
                     continue
                 lab = str(fp.get("LABEL", "")).upper()
                 lvl = int(lab[-1]) if lab.startswith("CIG") and lab[-1:].isdigit() else 1 if lab.startswith("SIG") else 0
                 cig = max(cig, lvl)
-        out.append(dict(day=day, valid=pr.get("VALID_ISO"), expire=pr.get("EXPIRE_ISO"), p25=p, cig=cig,
+        out.append(dict(day=day, when=f"{valid:%b %-d}" if bases and valid else f"day {day}", valid=valid and valid.isoformat(), expire=expire and expire.isoformat(), p25=p, cig=cig,
                         label=pr.get("LABEL2") if p else "Less than 2 % (outside SPC's tornado areas)"))
     return out
 
 
 def _iso(s):
     import datetime as dt
+    if s and len(s) == 12 and s.isdigit():   # archived outlooks: VALID "YYYYmmddHHMM" (UTC)
+        return dt.datetime.strptime(s, "%Y%m%d%H%M").replace(tzinfo=dt.timezone.utc)
     return dt.datetime.fromisoformat(s) if s else None
 
 

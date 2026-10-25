@@ -198,6 +198,32 @@ def nws(lat, lon):
                      desc=(f["properties"].get("description") or "")[:900]) for f in al["features"]],
     )
 
+def replay_weather(lat, lon, t0, hours):
+    """Replay mode: a past storm in the same shape as nws(). Weather from Open-Meteo's archive of past GFS/HRRR runs
+    (NWS doesn't keep its gridded forecasts), the NWS watches/warnings issued for the point's zone and county from the
+    Iowa Environmental Mesonet VTEC archive. Hours from 2 days before t0 so past rain is known."""
+    p = get(f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}")["properties"]
+    d0, d1 = (t0 - dt.timedelta(days=2)).date(), (t0 + dt.timedelta(hours=hours)).date()
+    h = get("https://historical-forecast-api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(dict(
+        latitude=lat, longitude=lon, start_date=d0, end_date=d1, models="gfs_seamless", wind_speed_unit="mph",
+        precipitation_unit="inch", timezone="UTC", hourly="wind_speed_10m,wind_gusts_10m,wind_direction_10m,precipitation,"
+        "precipitation_probability,weather_code")), cache=True)["hourly"]
+    ts = [dt.datetime.fromisoformat(t).replace(tzinfo=dt.timezone.utc) for t in h["time"]]
+    col = lambda k, f=lambda v: v: {t: None if v is None else f(v) for t, v in zip(ts, h[k])}
+    alerts = []
+    for u in (p["forecastZone"], p["county"]):
+        ev = soft(get, "https://mesonet.agron.iastate.edu/json/vtec_events_byugc.py?" + urllib.parse.urlencode(dict(
+            ugc=u.rsplit("/", 1)[-1], sdate=d0, edate=d1 + dt.timedelta(days=1))), cache=True) or {"events": []}
+        for e in ev["events"]:
+            a, b = dt.datetime.fromisoformat(e["issue"].replace("Z", "+00:00")), dt.datetime.fromisoformat(e["expire"].replace("Z", "+00:00"))
+            if b > t0 and a < t0 + dt.timedelta(hours=hours) and e["name"] not in (x["event"] for x in alerts):
+                alerts.append(dict(event=e["name"], headline=f"{e['name']} issued by NWS {e['wfo']}, "
+                                   f"{a.astimezone(ZoneInfo(p['timeZone'])):%a %b %-d %-I:%M %p} to {b.astimezone(ZoneInfo(p['timeZone'])):%-I:%M %p}",
+                                   severity="Severe" if e["significance"] == "W" else "Moderate", ends=b.isoformat(), desc=""))
+    return dict(tz=p["timeZone"], office=p["gridId"], place=p["relativeLocation"]["properties"],
+                sust=col("wind_speed_10m"), gust=col("wind_gusts_10m"), dir=col("wind_direction_10m"), qpf=col("precipitation"),
+                pop=col("precipitation_probability"), thunder=col("weather_code", lambda c: 60 if c >= 95 else 0), alerts=alerts)
+
 def google_weather(lat, lon, hours=96):
     """Google Maps Platform Weather API hourly forecast (independent of NWS). Needs GOOGLE_MAPS_KEY (Demo Key works)."""
     key = os.environ.get("GOOGLE_MAPS_KEY")
@@ -1089,10 +1115,10 @@ def trim_walls(r, lens, share=0.10):
     return r
 
 
-def leaf_state(lat, lon):
+def leaf_state(lat, lon, today=None):
     """Current leaf-on fraction from NASA MODIS LAI (MCD15A2H, 500 m, 8-day; ~3-week latency): median of the 3x3 km
     block now vs. its July-August peak. Deciduous drag in autumn/winter is a fraction of summer's."""
-    today = dt.date.today(); y = today.year if today.month >= 9 else today.year - 1
+    today = today or dt.date.today(); y = today.year if today.month >= 9 else today.year - 1
     A = lambda d: f"A{d.year}{d.timetuple().tm_yday:03d}"
     def med(d0, d1, cache):
         r = get(f"https://modis.ornl.gov/rst/api/v1/MCD15A2H/subset?latitude={lat:.4f}&longitude={lon:.4f}&band=Lai_500m"
@@ -1456,12 +1482,17 @@ def build(args):
     elif args.house_at:  # street-interpolated geocodes can land on the wrong street; trust the user's point
         lat, lon = map(float, args.house_at.split(","))
     print(f"• {addr}  ({lat:.5f}, {lon:.5f})", file=sys.stderr)
-    w = nws(lat, lon)
-    gw = soft(google_weather, lat, lon); gnow = soft(google_now, lat, lon)
+    rp = args.replay and dt.datetime.fromisoformat(args.replay).replace(tzinfo=dt.timezone.utc, minute=0, second=0, microsecond=0)
+    if rp:
+        print(f"• REPLAY of {rp:%Y-%m-%d %H}Z: archived GFS/HRRR forecast, NWS warnings and SPC outlooks", file=sys.stderr)
+        w = replay_weather(lat, lon, rp, args.hours); gw = gnow = storm = None
+    else:
+        w = nws(lat, lon)
+        gw = soft(google_weather, lat, lon); gnow = soft(google_now, lat, lon)
+        storm = None if args.no_storm else soft(pick_storm, lat, lon, args.storm)
     tz = ZoneInfo(w["tz"])
-    storm = None if args.no_storm else soft(pick_storm, lat, lon, args.storm)
     track = soft(storm_track, storm) if storm else None
-    now = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    now = rp or dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
     hrs = args.hours
     if track and any(p[1] is None for p in track[1]):
         end = next(p[0] for p in track[1] if p[1] is None)
@@ -1470,7 +1501,7 @@ def build(args):
     w["spread"] = blend(w, gw, times)
     if gw:
         print(f"• blended NWS + Google Weather forecasts (model disagreement {w['spread'] * 200:.0f}%)", file=sys.stderr)
-    cal = soft(calib.calibrate, lat, lon, times)
+    cal = None if rp else soft(calib.calibrate, lat, lon, times)
     if cal:   # 7-model EMOS trained on the last 40 days at the nearest airports replaces the equal-weight median
         for t, m in zip(times, cal["median"]):
             if m:
@@ -1479,7 +1510,8 @@ def build(args):
         wt = sorted(cal["weights"]["0-24 h"].items(), key=lambda kv: -kv[1] if kv[0] in calib.NAMES.values() else 0)[:3]
         print(f"• calibrated 7-model blend (EMOS, {cal['train_days']} days at {', '.join(cal['stations'])}); top weights "
               + ", ".join(f"{k} {v:.2f}" for k, v in wt), file=sys.stderr)
-    archive_forecast(lat, lon, times, w, gw)
+    if not rp:
+        archive_forecast(lat, lon, times, w, gw)
     w["nowcast"] = nowcast(w, gnow, times)
     if gnow:
         print(f"• nowcast: gust now {gnow['gust']:.0f} mph, forecast scaled x{w['nowcast']:.2f} near-term", file=sys.stderr)
@@ -1491,6 +1523,8 @@ def build(args):
     with cf.ThreadPoolExecutor(6) as ex:
         fz, el, so, rv = (ex.submit(soft, f, lat, lon) for f in (flood_zone, elevation_ft, soil, river))
         fz, el, so, rv = fz.result(), el.result(), so.result(), rv.result()
+    if rp:
+        rv = None   # NWPS only has today's stage; a replay has no river reading
 
     # ---- 1. find the building at the address point
     print("• locating the building (footprint datasets + imagery)…", file=sys.stderr)
@@ -1622,7 +1656,7 @@ def build(args):
     ang = lambda a, b: abs((a - b + 180) % 360 - 180)
     hour_sector = [min(range(len(sectors)), key=lambda i: ang(sectors[i], d or sectors[0])) for d in d_nws]
     G_open = np.clip(g_nws / np.maximum([w["sust"].get(t) or 1 for t in times], 1), 1.25, 2.0)
-    leaf = soft(leaf_state, clat, clon)
+    leaf = soft(leaf_state, clat, clon, rp and rp.date())
     K["leaf"] = leaf["factor"] if leaf else 1.0
     lai = round(K["tree_LAI"] * (K["wood_frac"] + (1 - K["wood_frac"]) * K["leaf"]), 1)
     if leaf:
@@ -1687,10 +1721,12 @@ def build(args):
         if house.get("approach"):
             local["appr"] = np.array([a if a is not None else np.nan for a in house["approach"]])
 
-    spc = soft(tornado.spc_outlooks, lambda u: get(u, timeout=20), clat, clon, times[0], times[-1] + dt.timedelta(hours=1))
+    spc_arch = rp and [f"https://www.spc.noaa.gov/products/outlook/archive/{d:%Y}/day1otlk_{d:%Y%m%d}_1300_"
+                       for d in sorted({(t - dt.timedelta(hours=12)).date() for t in times})]   # 1300Z day 1 covers 12Z-12Z
+    spc = soft(tornado.spc_outlooks, lambda u: get(u, timeout=20, cache=bool(rp)), clat, clon, times[0], times[-1] + dt.timedelta(hours=1), spc_arch)
     if spc:
         site["spc"] = spc
-        print("• SPC tornado outlook: " + "; ".join(f"day {d['day']} {d['p25']:.0%} within 25 mi" + (f", CIG{d['cig']}" if d["cig"] else "")
+        print("• SPC tornado outlook: " + "; ".join(f"{d['when']} {d['p25']:.0%} within 25 mi" + (f", CIG{d['cig']}" if d["cig"] else "")
                                                    for d in spc), file=sys.stderr)
     print(f"• Monte Carlo ({K['members']} members)…", file=sys.stderr)
     sim = simulate(clat, clon, times, w, track, site, house, trees, np.random.default_rng(args.seed), local)
@@ -1813,7 +1849,7 @@ def build(args):
         tp = tn["probs"]; top = max(tn["days"], key=lambda d: d["p25"])
         risks.append(dict(key="tornado", title=f"Tornado winds at the {noun}", p=tp["ef0"],
                           plain=(f"{lvl(tp['ef0']).capitalize()}. SPC gives a {top['p25']:.0%} chance of a tornado within 25 miles "
-                                 f"(day {top['day']}{', strong tornadoes possible' if top['cig'] else ''}). Even then, a path "
+                                 f"({top['when']}{', strong tornadoes possible' if top['cig'] else ''}). Even then, a path "
                                  f"crossing this lot is rare: about 1 in {1 / max(tp['ef0'], 1e-12):,.0f}."
                                  if top["p25"] else f"Very unlikely. The {noun} is outside SPC's tornado risk areas (under 2 % "
                                  "within 25 miles)."),
@@ -1823,7 +1859,7 @@ def build(args):
                               "Rankine vortex; the share of the 25-mile circle where the lot would feel a given wind is "
                               "integrated exactly. Damage uses this building's own curves; EF speeds are damage-equivalent, so "
                               "no extra tornado load factor is applied. Included in the damage probabilities above.",
-                          calc=[["Chance of a tornado within 25 mi", ", ".join(f"day {d['day']}: {spc_p(d['p25'])}" for d in tn["days"])],
+                          calc=[["Chance of a tornado within 25 mi", ", ".join(f"{d['when']}: {spc_p(d['p25'])}" for d in tn["days"])],
                                 ["Lot sees tornado-force wind (EF0+)", odds(tp["ef0"])], ["Lot sees EF2+ wind", odds(tp["ef2"])],
                                 ["Minor damage from a tornado", odds(tp["minor"])]]))
     if hz["creek"] is not None:
@@ -1833,7 +1869,8 @@ def build(args):
                           calc=[["Stage now", f"{rv['stage']:.1f} ft"], ["Minor flood stage", f"{rv['minor']} ft"]]))
     return dict(
         meta=dict(address=addr, lat=clat, lon=clon, tz=w["tz"], office=w["office"],
-                  generated=dt.datetime.now(tz).strftime("%a %b %-d, %-I:%M %p %Z"),
+                  generated=f"as a replay of {rp.astimezone(tz):%a %b %-d, %Y} (archived forecasts)" if rp else dt.datetime.now(tz).strftime("%a %b %-d, %-I:%M %p %Z"),
+                  replay=rp and rp.isoformat(),
                   storm=storm and dict(name=storm["name"], id=storm["id"], cls=storm["classification"], kt=int(storm["intensity"]),
                                        mb=int(storm["pressure"]), adv=storm["publicAdvisory"]["advNum"],
                                        url=storm["publicAdvisory"]["url"], lat=storm["latitudeNumeric"], lon=storm["longitudeNumeric"],
@@ -1963,6 +2000,9 @@ def main():
     ap.add_argument("--storm", help="NHC storm id or name (default: nearest active storm)")
     ap.add_argument("--no-storm", action="store_true", help="weather-only mode (no tropical cyclone)")
     ap.add_argument("--hours", type=int, default=36)
+    ap.add_argument("--replay", default=os.environ.get("STORMVOYANCE_REPLAY") or None, metavar="YYYY-MM-DDTHH",
+                    help="re-run a past storm from archived forecasts, starting at this UTC hour (or env STORMVOYANCE_REPLAY), "
+                         "e.g. 2023-03-03T06 (Middle Tennessee high-wind and tornado day)")
     ap.add_argument("--house-at", help='"lat,lon" of the roof if the address pin lands on the street')
     ap.add_argument("--outline", help='roof outline as JSON [[lat, lon], ...] (overrides footprint detection)')
     ap.add_argument("--design-mph", type=float, help="ASCE 7 basic design wind speed for the site (3-s gust, mph; default 110)")
